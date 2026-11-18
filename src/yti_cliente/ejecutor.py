@@ -1,6 +1,7 @@
 """Ejecutor: registra un trabajo en la cola local y lo envía a la API (§9.2, §10.1)."""
 
 import logging
+import time as _time
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -18,11 +19,13 @@ from yti_cliente.api import (
     ServicioNoDisponible,
     TestigoInvalido,
     TopeDiario,
+    TrabajoNoEncontrado,
     contrato_compatible,
 )
-from yti_cliente.biblioteca import Biblioteca, normalizar_objetivo
+from yti_cliente.biblioteca import Biblioteca, normalizar_objetivo, texto_verificacion
 from yti_cliente.cola import Cola, ahora_utc, desde_iso, iso
 from yti_cliente.config import Config, validar_clave_proveedor
+from yti_cliente.render_md import analisis_a_markdown, marca_tiempo
 from yti_cliente.testigo import ResultadoTestigo, SinConexion
 from yti_cliente.youtube import UrlNoAdmitida, extraer_video_id
 
@@ -414,3 +417,233 @@ def encolar(ctx: Contexto, url: str, **kw) -> ResultadoEncolar:
     return ResultadoEncolar(
         False, _mensaje_resultado(trabajo), trabajo, estimacion(trabajo.get("duracion_s"))
     )
+
+
+# --- activar: sondeo, baja y espera (§9.3, §10.2) ---
+
+ESTADOS_FINALES = ("en_biblioteca", "error", "perdido")
+_PAUSA_INICIAL_S = 15
+_PAUSA_LARGA_S = 60
+_FASE_INICIAL_S = 120
+
+
+@dataclass
+class ResumenActivacion:
+    enviados: list[dict]
+    bajados: list[dict]
+    errores: list[dict]
+    avisos: list[str]
+
+
+def hay_activos(ctx: Contexto) -> bool:
+    return ctx.cola.hay_activos()
+
+
+def _aplicar(ctx: Contexto, trabajo: dict, cambios: dict) -> bool:
+    """Aplica `cambios` solo si el trabajo sigue `enviado` con el mismo `id_remoto`."""
+    actualizado = ctx.cola.actualizar_si(
+        trabajo["id_local"], {"id_remoto": trabajo["id_remoto"], "estado": "enviado"}, cambios
+    )
+    if actualizado is None:
+        log.warning("El trabajo %s cambió durante el sondeo; se descarta la respuesta.", trabajo["id_local"])
+        return False
+    trabajo.clear()
+    trabajo.update(actualizado)
+    return True
+
+
+def _poner_error(ctx: Contexto, trabajo: dict, codigo: str, mensaje: str) -> bool:
+    if not _aplicar(ctx, trabajo, {"estado": "error", "error": {"codigo": codigo, "mensaje": mensaje}}):
+        return False
+    ctx.cola.borrar_testigo(trabajo["id_local"])
+    return True
+
+
+def _mensaje_error_remoto(ctx: Contexto, codigo: str | None, mensaje: str | None) -> str:
+    if codigo == "GEMINI_AUTH":
+        return "La clave de Gemini fue rechazada; revísala con `yti config --clave gemini`."
+    if codigo in ("CLAUDE_AUTH", "SIN_API_KEY_CLAUDE"):
+        return (
+            "La clave de Anthropic es inválida, falta o no tiene saldo; "
+            "revísala con `yti config --clave anthropic`."
+        )
+    return _limpio(ctx, mensaje or "El servicio no informó el motivo.")
+
+
+def _error_remoto(ctx: Contexto, trabajo: dict, error: dict) -> None:
+    codigo = error.get("codigo") or "ERROR_REMOTO"
+    if codigo == "CLAVES_NO_DISPONIBLES":
+        if not trabajo.get("reenvios_claves"):
+            # el testigo guardado y su idioma se conservan para el reenvío
+            _aplicar(
+                ctx, trabajo,
+                {"reenvios_claves": 1, "estado": "por_enviar", "id_remoto": None,
+                 "estado_remoto": None, "motivo_sin_envio": "el servidor perdió las claves; se reenvía"},
+            )
+            return
+        mensaje = (
+            "El servidor no conservó las claves tras un reenvío; "
+            "vuelve a encolar el video a mano."
+        )
+    else:
+        mensaje = _mensaje_error_remoto(ctx, codigo, error.get("mensaje"))
+    _poner_error(ctx, trabajo, codigo, mensaje)
+
+
+def bajar_resultado(ctx: Contexto, trabajo: dict, vista: dict) -> dict:
+    """Escribe el resultado en la biblioteca y deja el trabajo `en_biblioteca` (idempotente)."""
+    id_local = trabajo["id_local"]
+    with ctx.cola.candado():
+        try:
+            actual = ctx.cola.leer(id_local)
+        except (OSError, ValueError):
+            return trabajo
+        if actual.get("id_remoto") != trabajo.get("id_remoto") or actual.get("estado") not in (
+            "enviado", "en_biblioteca"
+        ):
+            log.warning("El trabajo %s cambió; no se baja el resultado.", id_local)
+            return actual
+        resultado = vista.get("resultado") or {}
+        cuerpo = resultado.get("transcripcion_md")
+        if not cuerpo:
+            _poner_error(
+                ctx, trabajo, "CONTRATO_INCOMPATIBLE",
+                "El resultado no incluye la transcripción; " + _AVISO_VERSION,
+            )
+            return trabajo
+        video_id = vista.get("video_id") or trabajo["video_id"]
+        meta = resultado.get("metadatos") or {}
+        titulo = meta.get("titulo") or trabajo.get("titulo_local") or None
+        canal = meta.get("canal") or trabajo.get("canal_local") or "desconocido"
+        segundos = trabajo.get("duracion_s")
+        if segundos is None:
+            segundos = meta.get("duracion_s")
+        duracion = marca_tiempo(segundos) if segundos is not None else "desconocida"
+        verif = resultado.get("verificacion") or {}
+        estado_verif, pct = verif.get("estado"), verif.get("coincidencia_pct")
+        uso = vista.get("uso")
+        costo = ((uso or {}).get("costo_usd") or {}).get("total")
+        obtenido = iso(ctx.reloj())
+        id_remoto = trabajo["id_remoto"]
+        bib = ctx.biblioteca
+        bib.escribir_transcripcion(
+            video_id, titulo,
+            {
+                "video_id": video_id, "titulo": titulo or video_id, "canal": canal,
+                "url": trabajo.get("url"), "duracion": duracion,
+                "fuente": vista.get("metodo_transcripcion"),
+                "fuente_testigo": vista.get("fuente_testigo"),
+                "verificacion": estado_verif, "coincidencia_pct": pct,
+                "obtenido": obtenido, "trabajo": id_remoto,
+            },
+            cuerpo,
+        )
+        analisis = resultado.get("analisis")
+        if trabajo.get("modo") == "analisis" and isinstance(analisis, dict):
+            bib.escribir_analisis(
+                video_id, titulo, trabajo.get("objetivo"),
+                {
+                    "video_id": video_id, "objetivo": trabajo.get("objetivo"),
+                    "modelo": vista.get("modelo"), "obtenido": obtenido, "costo_usd": costo,
+                    "verificacion": estado_verif, "coincidencia_pct": pct, "trabajo": id_remoto,
+                },
+                analisis_a_markdown(
+                    analisis, titulo=titulo or video_id, video_id=video_id,
+                    objetivo=trabajo.get("objetivo"),
+                    verificacion_texto=texto_verificacion(estado_verif, pct),
+                ),
+            )
+        if trabajo.get("proyecto"):
+            bib.agregar_a_proyecto(trabajo["proyecto"], video_id)
+        bib.regenerar_indice()
+        ctx.cola.borrar_testigo(id_local)
+        cambios = {"estado": "en_biblioteca", "estado_remoto": "completado", "uso": uso, "error": None}
+        actualizado = ctx.cola.actualizar_si(id_local, {"id_remoto": id_remoto}, cambios)
+        if actualizado is not None:
+            trabajo.clear()
+            trabajo.update(actualizado)
+        return trabajo
+
+
+def _sondear(ctx: Contexto, api: ClienteApi, trabajo: dict, resumen: ResumenActivacion) -> None:
+    id_local = trabajo["id_local"]
+    try:
+        vista = api.consultar(trabajo["id_remoto"])
+    except ClaveYtiInvalida:
+        resumen.avisos.append(f"{id_local}: la clave de yt-insights fue rechazada; revisa `yti config`.")
+        return
+    except TrabajoNoEncontrado:
+        if _aplicar(ctx, trabajo, {"estado": "perdido"}):
+            ctx.cola.borrar_testigo(id_local)
+            resumen.avisos.append(f"{id_local}: el servidor ya no conoce el trabajo; se marca perdido.")
+        return
+    except ServicioNoDisponible:
+        return
+    except ErrorApi as e:  # p. ej. ContratoIncompatible: puede ser pasajero, sin cambio
+        resumen.avisos.append(f"{id_local}: {_limpio(ctx, e.mensaje)}")
+        return
+    estado = vista.get("estado")
+    if estado == "completado":
+        bajar_resultado(ctx, trabajo, vista)
+    elif estado == "error":
+        _error_remoto(ctx, trabajo, vista.get("error") or {})
+    else:
+        _aplicar(ctx, trabajo, {"estado_remoto": estado, "intentos_remotos": vista.get("intentos", 0)})
+    if trabajo.get("estado") == "en_biblioteca":
+        resumen.bajados.append(trabajo)
+    elif trabajo.get("estado") == "error":
+        resumen.errores.append({"id_local": id_local, **(trabajo.get("error") or {})})
+
+
+def activar(ctx: Contexto) -> ResumenActivacion:
+    """Pasos 1 a 3 de §9.3: envía lo pendiente, sondea lo enviado y baja lo completado."""
+    resumen = ResumenActivacion([], [], [], [])
+    for trabajo in ctx.cola.tomar_para_envio():
+        try:
+            enviar(ctx, trabajo)
+        except ErrorLocal as e:
+            resumen.errores.append({"id_local": trabajo["id_local"], "codigo": e.codigo, "mensaje": e.mensaje})
+            continue
+        estado = trabajo.get("estado")
+        if estado == "enviado":
+            resumen.enviados.append(trabajo)
+        elif estado == "error":
+            resumen.errores.append({"id_local": trabajo["id_local"], **(trabajo.get("error") or {})})
+        elif trabajo.get("motivo_sin_envio"):
+            resumen.avisos.append(f"{trabajo['id_local']}: {trabajo['motivo_sin_envio']}")
+    enviados = [t for t in ctx.cola.listar() if t.get("estado") == "enviado" and t.get("id_remoto")]
+    if enviados:
+        try:
+            with ctx.api() as api:
+                for trabajo in enviados:
+                    _sondear(ctx, api, trabajo, resumen)
+        except ErrorLocal as e:
+            resumen.errores.append({"id_local": None, "codigo": e.codigo, "mensaje": e.mensaje})
+    return resumen
+
+
+def esperar(
+    ctx: Contexto,
+    id_local: str | None = None,
+    *,
+    tope_min: int = 30,
+    dormir: Callable[[float], None] = _time.sleep,
+) -> list[dict]:
+    """Activa y duerme (15 s los primeros 120 s, luego 60 s) hasta que todo termine o venza el tope."""
+    if id_local is not None:
+        ids = [id_local]
+    else:
+        ids = [t["id_local"] for t in ctx.cola.listar() if t.get("estado") not in ESTADOS_FINALES]
+    inicio = ctx.reloj()
+    while True:
+        activar(ctx)
+        observados = []
+        for i in ids:
+            try:
+                observados.append(ctx.cola.leer(i))
+            except (OSError, ValueError):
+                raise ErrorLocal("TRABAJO_NO_ENCONTRADO", f"No existe el trabajo local {i}.") from None
+        transcurrido = (ctx.reloj() - inicio).total_seconds()
+        if all(t.get("estado") in ESTADOS_FINALES for t in observados) or transcurrido >= tope_min * 60:
+            return observados
+        dormir(_PAUSA_INICIAL_S if transcurrido < _FASE_INICIAL_S else _PAUSA_LARGA_S)
