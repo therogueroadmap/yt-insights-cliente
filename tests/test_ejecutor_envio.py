@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -478,3 +479,40 @@ def test_dos_registros_misma_url_crean_un_trabajo(env):
         h.join()
     assert len(_json_cola(env.ctx)) == 1
     assert sum(1 for r in resultados if not r.duplicado) == 1
+
+
+# --- idioma de salida ---
+
+
+def test_envia_idioma_de_la_config(env):
+    enviar(env.ctx, registrar(env.ctx, URL, objetivo="x").trabajo)
+    assert _cuerpo(env.post)["idioma"] == env.cfg.idioma == "es"
+
+
+def test_idioma_explicito_se_persiste_y_se_envia(env):
+    res = registrar(env.ctx, URL, objetivo="x", idioma="en")
+    assert env.ctx.cola.leer(res.trabajo["id_local"])["idioma"] == "en"
+    enviar(env.ctx, res.trabajo)
+    assert _cuerpo(env.post)["idioma"] == "en"
+
+
+def test_idioma_persistido_gana_sobre_la_config_en_reenvios(env):
+    res = registrar(env.ctx, URL, objetivo="x", idioma="en")
+    env.ctx.cfg = dataclasses.replace(env.ctx.cfg, idioma="fr")  # la config cambia antes del reenvío
+    enviar(env.ctx, env.ctx.cola.leer(res.trabajo["id_local"]))
+    assert _cuerpo(env.post)["idioma"] == "en"
+
+
+def test_trabajo_antiguo_sin_idioma_usa_la_config(env):
+    res = registrar(env.ctx, URL, objetivo="x")
+    trabajo = env.ctx.cola.leer(res.trabajo["id_local"])
+    del trabajo["idioma"]  # cola creada por un cliente anterior
+    enviar(env.ctx, trabajo)
+    assert _cuerpo(env.post)["idioma"] == "es"
+
+
+def test_idioma_explicito_invalido(env):
+    with pytest.raises(ErrorLocal) as e:
+        registrar(env.ctx, URL, idioma="ES_es")
+    assert e.value.codigo == "IDIOMA_INVALIDO"
+    assert _json_cola(env.ctx) == []

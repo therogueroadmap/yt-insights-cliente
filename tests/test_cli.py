@@ -200,3 +200,26 @@ def test_config_biblioteca_relativa_se_guarda_absoluta(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert cli.main(["config", "--biblioteca", "rel/bib"]) == 0
     assert cargar_config(ruta_config(), {}).biblioteca == (tmp_path / "rel" / "bib").resolve()
+
+
+def test_config_idioma_se_guarda(capsys):
+    assert cli.main(["config", "--idioma", "pt-BR"]) == 0
+    assert cargar_config(ruta_config(), {}).idioma == "pt-BR"
+    assert "idioma: pt-BR" in capsys.readouterr().out
+
+
+def test_config_idioma_invalido(capsys):
+    assert cli.main(["config", "--idioma", "ES_es"]) == 1
+    assert not ruta_config().exists()
+    assert "Error:" in capsys.readouterr().err
+
+
+def test_config_muestra_idioma_con_origen(monkeypatch, capsys):
+    monkeypatch.setenv("YTI_IDIOMA", "en")
+    assert cli.main(["config"]) == 0
+    assert "idioma: en (entorno)" in capsys.readouterr().out
+
+
+def test_encolar_no_tiene_flag_idioma():
+    with pytest.raises(SystemExit):
+        cli.main(["encolar", URL, "--idioma", "en"])

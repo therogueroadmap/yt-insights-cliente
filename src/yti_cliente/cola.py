@@ -39,7 +39,7 @@ def desde_iso(texto: str) -> datetime:
 def _campos_base() -> dict:
     return {
         "version": ESQUEMA, "id_local": None, "url": None, "video_id": None, "modo": None,
-        "objetivo": None, "objetivo_normalizado": None, "proyecto": None,
+        "objetivo": None, "idioma": None, "objetivo_normalizado": None, "proyecto": None,
         "testigo_estado": None, "motivo_sin_testigo": None, "duracion_s": None,
         "titulo_local": None, "canal_local": None, "estado": None, "id_remoto": None,
         "estado_remoto": None, "intentos_remotos": 0, "enviar_despues": None,

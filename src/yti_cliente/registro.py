@@ -9,6 +9,8 @@ from pathlib import Path
 import platformdirs
 
 _CABECERA = re.compile(r"(X-(?:API|Gemini|Anthropic)-Key\s*[:=]\s*)\S+", re.IGNORECASE)
+# Logger del adaptador de yt-dlp (testigo.py): avisos como «No supported JavaScript runtime» no afectan al testigo.
+LOGGER_YTDLP = "yti_cliente.ytdlp"
 _FORMATO = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
@@ -17,6 +19,13 @@ def redactar(texto: str, claves: Iterable[str]) -> str:
     for clave in sorted({c for c in claves if c}, key=len, reverse=True):
         texto = texto.replace(clave, "***")
     return texto
+
+
+class FiltroSinYtdlp(logging.Filter):
+    """Deja fuera de la consola los mensajes del logger de yt-dlp; el archivo los conserva."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.name != LOGGER_YTDLP and not record.name.startswith(f"{LOGGER_YTDLP}.")
 
 
 class FiltroClaves(logging.Filter):
@@ -63,6 +72,7 @@ def configurar_registro(
     ]
     handlers[0].setLevel(logging.INFO)
     handlers[1].setLevel(logging.WARNING)  # la consola solo muestra avisos y errores; el archivo, INFO
+    handlers[1].addFilter(FiltroSinYtdlp())  # yt-dlp solo va al archivo
     for h in handlers:
         h.setFormatter(formato)
         h.addFilter(FiltroClaves(claves))

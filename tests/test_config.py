@@ -11,6 +11,9 @@ from yti_cliente.config import (
     enmascarar,
     guardar_valor,
     validar_clave_proveedor,
+    validar_idioma,
+    idioma_del_sistema,
+    _codigo_desde_locale,
 )
 
 CLAVE_G = "AIza" + "x" * 30
@@ -97,3 +100,89 @@ def test_toml_ilegible(tmp_path):
     ruta.write_text("esto no [es toml", encoding="utf-8")
     with pytest.raises(ErrorConfig):
         cargar_config(ruta, {})
+
+
+# --- idioma ---
+
+
+@pytest.fixture
+def sistema_en(monkeypatch):
+    monkeypatch.setattr("yti_cliente.config.idioma_del_sistema", lambda: "fr")
+
+
+def test_idioma_defecto_es_el_del_sistema(tmp_path, sistema_en):
+    cfg = cargar_config(tmp_path / "no.toml", {})
+    assert cfg.idioma == "fr" and cfg.origen["idioma"] == "defecto"
+
+
+def test_idioma_prioridad_entorno_archivo_defecto(tmp_path, sistema_en):
+    ruta = tmp_path / "c.toml"
+    guardar_valor("idioma", "pt", ruta)
+    cfg = cargar_config(ruta, {})
+    assert cfg.idioma == "pt" and cfg.origen["idioma"] == "archivo"
+    cfg = cargar_config(ruta, {"YTI_IDIOMA": "de"})
+    assert cfg.idioma == "de" and cfg.origen["idioma"] == "entorno"
+
+
+@pytest.mark.parametrize("valor", ["es", "spa", "es-419", "pt-BR"])
+def test_validar_idioma_valido(valor):
+    assert validar_idioma(valor) == valor
+
+
+@pytest.mark.parametrize("valor", ["", "e", "ES", "espanol", "es_ES", "es-", "es-" + "x" * 20, "e1", "es 419"])
+def test_validar_idioma_invalido(valor):
+    with pytest.raises(ErrorConfig):
+        validar_idioma(valor)
+
+
+def test_guardar_idioma_invalido_no_escribe(tmp_path):
+    ruta = tmp_path / "c.toml"
+    with pytest.raises(ErrorConfig):
+        guardar_valor("idioma", "ES_es", ruta)
+    assert not ruta.exists()
+
+
+def test_idioma_invalido_en_entorno_o_archivo_es_error(tmp_path):
+    with pytest.raises(ErrorConfig):
+        cargar_config(tmp_path / "no.toml", {"YTI_IDIOMA": "klingon!"})
+    ruta = tmp_path / "c.toml"
+    ruta.write_text('idioma = "xx_YY_zz"\n', encoding="utf-8")
+    with pytest.raises(ErrorConfig):
+        cargar_config(ruta, {})
+
+
+@pytest.mark.parametrize(
+    "nombre, esperado",
+    [("es_ES", "es"), ("es-419", "es"), ("en_US.UTF-8", "en"), ("pt-BR", "pt"), ("C", None),
+     ("POSIX", None), ("Spanish_Spain", None), ("", None), (None, None)],
+)
+def test_codigo_desde_locale(nombre, esperado):
+    assert _codigo_desde_locale(nombre) == esperado
+
+
+def test_idioma_del_sistema_windows_usa_api_de_windows(monkeypatch):
+    monkeypatch.setattr("yti_cliente.config.sys.platform", "win32")
+    monkeypatch.setattr("yti_cliente.config._locale_windows", lambda: "es-419")
+    monkeypatch.setattr("yti_cliente.config.locale.getlocale", lambda *a: ("Italian_Italy", "1252"))
+    assert idioma_del_sistema() == "es"
+
+
+def test_idioma_del_sistema_posix_usa_getlocale(monkeypatch):
+    monkeypatch.setattr("yti_cliente.config.sys.platform", "linux")
+    monkeypatch.setattr("yti_cliente.config.locale.getlocale", lambda *a: ("pt_BR", "UTF-8"))
+    assert idioma_del_sistema() == "pt"
+
+
+def test_idioma_del_sistema_sin_dato_cae_a_es(monkeypatch):
+    monkeypatch.setattr("yti_cliente.config.sys.platform", "linux")
+    monkeypatch.setattr("yti_cliente.config.locale.getlocale", lambda *a: (None, None))
+    for v in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+        monkeypatch.delenv(v, raising=False)
+    assert idioma_del_sistema() == "es"
+
+
+def test_idioma_del_sistema_windows_sin_api_cae_a_es(monkeypatch):
+    monkeypatch.setattr("yti_cliente.config.sys.platform", "win32")
+    monkeypatch.setattr("yti_cliente.config._locale_windows", lambda: None)
+    monkeypatch.setattr("yti_cliente.config.locale.getlocale", lambda *a: ("Spanish_Spain", "1252"))
+    assert idioma_del_sistema() == "es"

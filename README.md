@@ -31,9 +31,12 @@ yti config --clave gemini
 yti config --clave anthropic        # solo hace falta para el modo análisis
 yti config --biblioteca ~/mi-biblioteca
 yti config --api-url https://yt-insights-api-f8y7.onrender.com
+yti config --idioma en              # idioma en que se redacta el análisis (ISO 639-1)
 ```
 
-No pases claves como argumentos de línea de comandos: quedarían en el historial del shell. Por eso `--clave` las pide con entrada oculta. Las variables de entorno `YTI_API_KEY`, `YTI_GEMINI_KEY`, `YTI_ANTHROPIC_KEY`, `YTI_BIBLIOTECA` y `YTI_API_URL` tienen prioridad sobre el archivo.
+No pases claves como argumentos de línea de comandos: quedarían en el historial del shell. Por eso `--clave` las pide con entrada oculta. Las variables de entorno `YTI_API_KEY`, `YTI_GEMINI_KEY`, `YTI_ANTHROPIC_KEY`, `YTI_BIBLIOTECA`, `YTI_API_URL` y `YTI_IDIOMA` tienen prioridad sobre el archivo.
+
+El análisis se redacta en el idioma de salida configurado, no en el del video. Por defecto es el idioma del sistema (código ISO 639-1, p. ej. `es`); si no se puede determinar, `es`. Se admite una región opcional (`pt-BR`, `es-419`). Cada trabajo guarda su idioma en la cola local, así que los reintentos usan el mismo.
 
 ### Dónde quedan `config.toml` y `yti.log`
 

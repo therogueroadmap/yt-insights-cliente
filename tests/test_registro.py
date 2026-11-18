@@ -71,3 +71,53 @@ def test_consola_solo_warning_y_archivo_info(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "HTTP Request" not in err and "aviso visible" in err
     assert "HTTP Request" in ruta.read_text(encoding="utf-8")
+
+
+def _vaciar(logger_nombre="yti_cliente.ytdlp"):
+    for h in logging.getLogger().handlers + logging.getLogger(logger_nombre).handlers:
+        h.flush()
+
+
+def test_ytdlp_no_llega_a_la_consola_pero_si_al_archivo(tmp_path, capsys):
+    ruta = configurar_registro([], dir_logs=tmp_path)
+    lg = logging.getLogger("yti_cliente.ytdlp")
+    lg.warning("[youtube] No supported JavaScript runtime")
+    lg.error("ERROR: algo de yt-dlp")
+    logging.getLogger("yti_cliente.otro").warning("aviso normal")
+    _vaciar()
+    err = capsys.readouterr().err
+    assert "JavaScript" not in err and "yt-dlp" not in err and "aviso normal" in err
+    texto = ruta.read_text(encoding="utf-8")
+    assert "No supported JavaScript runtime" in texto and "algo de yt-dlp" in texto
+    assert "aviso normal" in texto
+
+
+def test_ytdlp_no_escribe_en_consola_ni_en_modo_mcp(tmp_path, capsys):
+    configurar_registro([], modo_mcp=True, dir_logs=tmp_path)
+    logging.getLogger("yti_cliente.ytdlp").warning("[youtube] aviso")
+    _vaciar()
+    capturado = capsys.readouterr()
+    assert capturado.out == "" and "aviso" not in capturado.err
+
+
+def test_otros_avisos_siguen_en_la_consola(tmp_path, capsys):
+    configurar_registro([], dir_logs=tmp_path)
+    logging.getLogger("yti_cliente.otro").warning("visible")
+    _vaciar()
+    assert "visible" in capsys.readouterr().err
+
+
+def test_ytdlp_redacta_claves_en_el_archivo(tmp_path):
+    ruta = configurar_registro([CLAVE_G], dir_logs=tmp_path)
+    logging.getLogger("yti_cliente.ytdlp").warning("k=%s", CLAVE_G)
+    _vaciar()
+    assert CLAVE_G not in ruta.read_text(encoding="utf-8")
+
+
+def test_idempotente_con_ytdlp(tmp_path):
+    configurar_registro([], dir_logs=tmp_path)
+    configurar_registro([], dir_logs=tmp_path)
+    ruta = tmp_path / "yti.log"
+    logging.getLogger("yti_cliente.ytdlp").warning("una vez")
+    _vaciar()
+    assert ruta.read_text(encoding="utf-8").count("una vez") == 1

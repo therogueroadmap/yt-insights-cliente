@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+import json
 import threading
 from datetime import datetime, timezone
 
@@ -95,7 +96,7 @@ async def test_cuatro_herramientas(env):
         "video", "objetivo", "contenido"
     }
     assert set(por_nombre["encolar_video"].input_schema["properties"]) == {
-        "url", "objetivo", "solo_transcripcion"
+        "url", "objetivo", "solo_transcripcion", "idioma"
     }
     for t in herramientas:
         assert "self" not in t.input_schema.get("properties", {})
@@ -349,3 +350,26 @@ async def test_listar_biblioteca_error_inesperado_es_texto_redactado(env, monkey
     assert "ValueError" in texto
     assert CLAVE_YTI not in texto
     assert "***" in texto
+
+
+async def test_encolar_pasa_idioma_explicito(env):
+    await env.servicio.encolar_video(URL, OBJETIVO, idioma="en")
+    await env.servicio.esperar_fondo()
+    assert json.loads(env.post.calls[0].request.content)["idioma"] == "en"
+
+
+async def test_encolar_sin_idioma_usa_el_de_la_config(env):
+    await env.servicio.encolar_video(URL, OBJETIVO)
+    await env.servicio.esperar_fondo()
+    assert json.loads(env.post.calls[0].request.content)["idioma"] == env.ctx.cfg.idioma
+
+
+async def test_encolar_idioma_invalido_devuelve_texto(env):
+    texto = await env.servicio.encolar_video(URL, OBJETIVO, idioma="Español")
+    assert "idioma" in texto.lower() and env.ctx.cola.listar() == []
+
+
+async def test_encolar_describe_el_parametro_idioma(env):
+    herramientas = {t.name: t for t in await construir_servidor(env.servicio).list_tools()}
+    desc = herramientas["encolar_video"].input_schema["properties"]["idioma"].get("description", "")
+    assert "639-1" in desc

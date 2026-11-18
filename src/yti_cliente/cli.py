@@ -16,6 +16,7 @@ from yti_cliente.config import (
     guardar_valor,
     ruta_config,
     validar_clave_proveedor,
+    validar_idioma,
 )
 from yti_cliente.ejecutor import (
     ErrorLocal,
@@ -40,6 +41,7 @@ def _parser() -> argparse.ArgumentParser:
     c.add_argument("--clave", choices=sorted(_CLAVES_CLI), help="pide la clave sin eco y la guarda")
     c.add_argument("--biblioteca", help="carpeta de la biblioteca")
     c.add_argument("--api-url", dest="api_url", help="URL de la API")
+    c.add_argument("--idioma", help="idioma de salida del análisis (código ISO 639-1, p. ej. es, en, pt-BR)")
 
     e = sub.add_parser("encolar", help="encola un video de YouTube")
     e.add_argument("url")
@@ -63,11 +65,12 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _config(args) -> int:
-    if args.clave is None and args.biblioteca is None and args.api_url is None:
+    if args.clave is None and args.biblioteca is None and args.api_url is None and args.idioma is None:
         cfg = cargar_config()
         print(f"Archivo: {ruta_config()}")
         print(f"api_url: {cfg.api_url} ({_ORIGENES[cfg.origen['api_url']]})")
         print(f"biblioteca: {cfg.biblioteca} ({_ORIGENES[cfg.origen['biblioteca']]})")
+        print(f"idioma: {cfg.idioma} ({_ORIGENES[cfg.origen['idioma']]})")
         for campo, valor in (
             ("yt_insights", cfg.clave_yti), ("gemini", cfg.clave_gemini), ("anthropic", cfg.clave_anthropic),
         ):
@@ -91,6 +94,10 @@ def _config(args) -> int:
     if args.api_url is not None:
         guardar_valor("api_url", args.api_url)
         print(f"api_url: {args.api_url}")
+    if args.idioma is not None:
+        idioma = validar_idioma(args.idioma)
+        guardar_valor("idioma", idioma)
+        print(f"idioma: {idioma}")
     return 0
 
 

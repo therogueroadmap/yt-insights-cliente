@@ -25,7 +25,7 @@ from yti_cliente.api import (
 )
 from yti_cliente.biblioteca import Biblioteca, normalizar_objetivo, texto_verificacion
 from yti_cliente.cola import Cola, ahora_utc, desde_iso, iso
-from yti_cliente.config import Config, validar_clave_proveedor
+from yti_cliente.config import Config, ErrorConfig, validar_clave_proveedor, validar_idioma
 from yti_cliente.render_md import analisis_a_markdown, marca_tiempo
 from yti_cliente.testigo import ResultadoTestigo, SinConexion
 from yti_cliente.youtube import UrlNoAdmitida, extraer_video_id
@@ -149,6 +149,7 @@ def registrar(
     sin_testigo: bool = False,
     proyecto: str | None = None,
     forzar: bool = False,
+    idioma: str | None = None,
 ) -> ResultadoEncolar:
     try:
         video_id = extraer_video_id(url)
@@ -159,6 +160,11 @@ def registrar(
         raise ErrorLocal(
             "OBJETIVO_LARGO", f"El objetivo supera los {MAX_OBJETIVO} caracteres."
         )
+    if idioma is not None:
+        try:
+            idioma = validar_idioma(idioma)
+        except ErrorConfig as err:
+            raise ErrorLocal("IDIOMA_INVALIDO", str(err)) from None
     modo = "transcripcion" if solo_transcripcion else "analisis"
     normalizado = normalizar_objetivo(objetivo)
 
@@ -198,6 +204,7 @@ def registrar(
                 "video_id": video_id,
                 "modo": modo,
                 "objetivo": objetivo,
+                "idioma": idioma or ctx.cfg.idioma,
                 "objetivo_normalizado": normalizado,
                 "proyecto": proyecto,
                 "testigo_estado": "desactivado" if sin_testigo else "pendiente",
@@ -303,6 +310,7 @@ def _post(ctx: Contexto, api: ClienteApi, trabajo: dict) -> str:
                 url=trabajo["url"],
                 modo=trabajo["modo"],
                 objetivo=trabajo.get("objetivo"),
+                idioma=trabajo.get("idioma") or cfg.idioma,
                 testigo=testigo,
                 clave_gemini=cfg.clave_gemini,
                 clave_anthropic=cfg.clave_anthropic,

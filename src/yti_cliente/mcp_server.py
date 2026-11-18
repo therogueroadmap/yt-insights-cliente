@@ -5,8 +5,10 @@ import contextlib
 import logging
 import sys
 from collections.abc import AsyncIterator
+from typing import Annotated
 
 from mcp.server.mcpserver import MCPServer
+from pydantic import Field
 
 from yti_cliente.config import ErrorConfig, cargar_config, claves_cargadas
 from yti_cliente.ejecutor import (
@@ -55,7 +57,20 @@ class Servicio:
             log.exception("Falló el envío en segundo plano del trabajo %s", trabajo.get("id_local"))
 
     async def encolar_video(
-        self, url: str, objetivo: str | None = None, solo_transcripcion: bool = False
+        self,
+        url: str,
+        objetivo: str | None = None,
+        solo_transcripcion: bool = False,
+        idioma: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Idioma en que escribe el usuario en esta conversación, como código ISO 639-1 "
+                    "(es, en, pt, fr...). El análisis se redactará en ese idioma. Pásalo siempre; "
+                    "si se omite, se usa el idioma configurado en el cliente."
+                )
+            ),
+        ] = None,
     ) -> str:
         """Encola un video de YouTube para su análisis o su transcripción y retorna de inmediato.
 
@@ -65,7 +80,8 @@ class Servicio:
         """
         try:
             res = await asyncio.to_thread(
-                registrar, self.ctx, url, objetivo=objetivo, solo_transcripcion=solo_transcripcion
+                registrar, self.ctx, url, objetivo=objetivo, solo_transcripcion=solo_transcripcion,
+                idioma=idioma,
             )
         except ErrorLocal as e:
             return e.mensaje

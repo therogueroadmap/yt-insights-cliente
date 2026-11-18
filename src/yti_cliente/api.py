@@ -162,11 +162,12 @@ class ClienteApi:
         testigo: dict | None,
         clave_gemini: str,
         clave_anthropic: str | None,
+        idioma: str,
     ) -> str:
         cabeceras = {"X-API-Key": self._clave_yti, "X-Gemini-Key": clave_gemini}
         if modo == "analisis" and clave_anthropic:
             cabeceras["X-Anthropic-Key"] = clave_anthropic
-        cuerpo: dict = {"url": url, "modo": modo}
+        cuerpo: dict = {"url": url, "modo": modo, "idioma": idioma}
         if objetivo is not None and objetivo.strip():
             cuerpo["objetivo"] = objetivo
         if testigo is not None:

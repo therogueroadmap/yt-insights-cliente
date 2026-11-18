@@ -48,6 +48,7 @@ def crear(cliente, **kw):
         testigo={"formato": "vtt", "idioma": "es", "contenido": "WEBVTT"},
         clave_gemini=CLAVE_GEMINI,
         clave_anthropic=CLAVE_ANTHROPIC,
+        idioma="es",
     )
     args.update(kw)
     return cliente.crear_trabajo(**args)
@@ -65,7 +66,15 @@ def test_crear_202_cabeceras_y_cuerpo(mock, cliente):
         "modo": "analisis",
         "objetivo": "migrar",
         "testigo": {"formato": "vtt", "idioma": "es", "contenido": "WEBVTT"},
+        "idioma": "es",
     }
+
+
+def test_crear_envia_el_idioma_de_salida(mock, cliente):
+    ruta = mock.post("/v1/jobs").respond(202, json={"id": "abc"})
+    crear(cliente, idioma="en", testigo=None)
+    cuerpo = json.loads(ruta.calls.last.request.content)
+    assert cuerpo["idioma"] == "en" and "testigo" not in cuerpo
 
 
 @pytest.mark.parametrize("objetivo", [None, "  "])
@@ -83,6 +92,7 @@ def test_crear_transcripcion_sin_anthropic(mock, cliente, objetivo):
     assert json.loads(req.content) == {
         "url": "https://youtu.be/XXXXXXXXXXX",
         "modo": "transcripcion",
+        "idioma": "es",
     }
 
 

@@ -8,7 +8,7 @@ Ejecuta `yti config` en una terminal y guarda ahí tus claves (`yt-insights`, `g
 
 Motivo: los hosts MCP suelen guardar el archivo de configuración, y las variables de `env`, en texto plano. Una clave escrita ahí queda legible para cualquier programa o persona con acceso a ese archivo, y es fácil que acabe en una copia de seguridad o en un repositorio. El archivo de `yti config` se crea con permisos restringidos (`0600` en POSIX) y el servidor lo lee al arrancar.
 
-Si aun así prefieres variables de entorno, las admitidas son `YTI_API_KEY`, `YTI_GEMINI_KEY` y `YTI_ANTHROPIC_KEY` (más `YTI_BIBLIOTECA` y `YTI_API_URL`). La variable de entorno tiene prioridad sobre el archivo.
+Si aun así prefieres variables de entorno, las admitidas son `YTI_API_KEY`, `YTI_GEMINI_KEY` y `YTI_ANTHROPIC_KEY` (más `YTI_BIBLIOTECA`, `YTI_API_URL` y `YTI_IDIOMA`). La variable de entorno tiene prioridad sobre el archivo.
 
 ## 2. Bloque de configuración
 
@@ -132,7 +132,7 @@ y escríbela con las barras invertidas duplicadas en el JSON, por ejemplo `"comm
 
 | Herramienta | Qué hace |
 |---|---|
-| `encolar_video(url, objetivo?, solo_transcripcion?)` | Registra el video en la cola local y vuelve de inmediato; el envío a la API sigue en segundo plano. Un duplicado devuelve un aviso: para forzarlo, hazlo desde la terminal con `yti encolar <url> --forzar`. |
+| `encolar_video(url, objetivo?, solo_transcripcion?, idioma?)` | Registra el video en la cola local y vuelve de inmediato; el envío a la API sigue en segundo plano. Un duplicado devuelve un aviso: para forzarlo, hazlo desde la terminal con `yti encolar <url> --forzar`. `idioma` (ISO 639-1) es el idioma en que se redacta el análisis: el LLM del host debe pasar el que usa el usuario en la conversación; si se omite, se usa el de `yti config --idioma`. |
 | `ver_cola()` | Actualiza la cola, muestra el estado de cada trabajo con su tiempo estimado y baja a la biblioteca los resultados listos (sección «Recién bajados»). |
 | `listar_biblioteca(buscar?)` | Lista los videos de la biblioteca; `buscar` filtra por título, canal u objetivo. |
 | `leer_resultado(video, objetivo?, contenido?)` | Devuelve el análisis (`contenido="analisis"`, por defecto) o la transcripción (`"transcripcion"`). `video` puede ser un video_id, una URL o parte del título. |
