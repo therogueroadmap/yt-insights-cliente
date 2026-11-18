@@ -1,0 +1,199 @@
+"""Terminal `yti` (§8.2, §8.3)."""
+
+import argparse
+import getpass
+import importlib
+import sys
+from typing import Sequence
+
+from yti_cliente.cola import EsquemaMasNuevo, desde_iso
+from yti_cliente.config import (
+    ErrorConfig,
+    cargar_config,
+    claves_cargadas,
+    enmascarar,
+    guardar_valor,
+    ruta_config,
+    validar_clave_proveedor,
+)
+from yti_cliente.ejecutor import (
+    ErrorLocal,
+    activar,
+    crear_contexto,
+    encolar,
+    esperar,
+    estimacion,
+)
+from yti_cliente.registro import configurar_registro
+
+_CLAVES_CLI = {"yt-insights": "yt_insights", "gemini": "gemini", "anthropic": "anthropic"}
+_ORIGENES = {"entorno": "entorno", "archivo": "archivo", "defecto": "por defecto", "ausente": "sin configurar"}
+_COLUMNAS = ("id local", "video", "objetivo", "estado", "remoto", "intentos", "nota")
+
+
+def _parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="yti", description="Cliente local de yt-insights.")
+    sub = p.add_subparsers(dest="comando", required=True, metavar="comando")
+
+    c = sub.add_parser("config", help="muestra o cambia la configuración")
+    c.add_argument("--clave", choices=sorted(_CLAVES_CLI), help="pide la clave sin eco y la guarda")
+    c.add_argument("--biblioteca", help="carpeta de la biblioteca")
+    c.add_argument("--api-url", dest="api_url", help="URL de la API")
+
+    e = sub.add_parser("encolar", help="encola un video de YouTube")
+    e.add_argument("url")
+    e.add_argument("--objetivo")
+    e.add_argument("--solo-transcripcion", action="store_true")
+    e.add_argument("--sin-testigo", action="store_true")
+    e.add_argument("--proyecto")
+    e.add_argument("--forzar", action="store_true")
+
+    sub.add_parser("estado", help="activa la cola y muestra su estado")
+
+    w = sub.add_parser("esperar", help="espera hasta que los trabajos terminen")
+    w.add_argument("id_local", nargs="?")
+    w.add_argument("--tope-min", type=int, default=30, dest="tope_min")
+
+    li = sub.add_parser("lista", help="lista los videos de la biblioteca")
+    li.add_argument("--buscar")
+
+    sub.add_parser("mcp", help="arranca el servidor MCP por stdio")
+    return p
+
+
+def _config(args) -> int:
+    if args.clave is None and args.biblioteca is None and args.api_url is None:
+        cfg = cargar_config()
+        print(f"Archivo: {ruta_config()}")
+        print(f"api_url: {cfg.api_url} ({_ORIGENES[cfg.origen['api_url']]})")
+        print(f"biblioteca: {cfg.biblioteca} ({_ORIGENES[cfg.origen['biblioteca']]})")
+        for campo, valor in (
+            ("yt_insights", cfg.clave_yti), ("gemini", cfg.clave_gemini), ("anthropic", cfg.clave_anthropic),
+        ):
+            print(f"{campo}: {enmascarar(valor)} ({_ORIGENES[cfg.origen[campo]]})")
+        return 0
+    if args.clave is not None:
+        valor = getpass.getpass(f"Clave de {args.clave} (no se muestra): ").strip()
+        if not valor:
+            raise ErrorConfig("La clave está vacía; no se guardó nada.")
+        if args.clave != "yt-insights" and not validar_clave_proveedor(valor):
+            raise ErrorConfig(
+                f"La clave de {args.clave} tiene un formato inválido "
+                "(20 a 512 caracteres: letras, números, `.`, `_` y `-`); no se guardó nada."
+            )
+        guardar_valor(_CLAVES_CLI[args.clave], valor)
+        print(f"Clave de {args.clave} guardada.")
+    if args.biblioteca is not None:
+        guardar_valor("biblioteca", args.biblioteca)
+        print(f"Biblioteca: {args.biblioteca}")
+    if args.api_url is not None:
+        guardar_valor("api_url", args.api_url)
+        print(f"api_url: {args.api_url}")
+    return 0
+
+
+def _nota(t: dict) -> str:
+    if t.get("estado") == "retenido" and t.get("enviar_despues"):
+        local = desde_iso(t["enviar_despues"]).astimezone().strftime("%Y-%m-%d %H:%M")
+        return f"se enviará a partir de {local}"
+    if t.get("error"):
+        e = t.get("error") or {}
+        return f"{e.get('codigo')}: {e.get('mensaje')}"
+    if t.get("estado") in ("por_enviar", "enviando", "enviado"):
+        return estimacion(t.get("duracion_s"))
+    return ""
+
+
+def _tabla(trabajos: list[dict]) -> str:
+    if not trabajos:
+        return "La cola está vacía."
+    filas = [_COLUMNAS] + [
+        (
+            t["id_local"], t.get("video_id") or "-", t.get("objetivo") or "-",
+            t.get("estado") or "-", t.get("estado_remoto") or "-",
+            str(t.get("intentos_remotos") or 0), _nota(t),
+        )
+        for t in trabajos
+    ]
+    filas = [tuple(" ".join(str(c).split()) for c in f) for f in filas]
+    anchos = [max(len(f[i]) for f in filas) for i in range(len(_COLUMNAS))]
+    return "\n".join("  ".join(c.ljust(a) for c, a in zip(f, anchos)).rstrip() for f in filas)
+
+
+def _encolar(ctx, args) -> int:
+    res = encolar(
+        ctx, args.url, objetivo=args.objetivo, solo_transcripcion=args.solo_transcripcion,
+        sin_testigo=args.sin_testigo, proyecto=args.proyecto, forzar=args.forzar,
+    )
+    if res.duplicado:
+        print(res.mensaje)
+        return 0
+    t = res.trabajo
+    print(f"Id local: {t['id_local']}")
+    print(f"Id remoto: {t.get('id_remoto') or '-'}")
+    print(f"Estado: {t.get('estado')}")
+    print(f"Estimación: {res.estimacion}")
+    print(res.mensaje)
+    return 0
+
+
+def _estado(ctx) -> int:
+    resumen = activar(ctx)
+    for aviso in resumen.avisos:
+        print(f"Aviso: {aviso}")
+    for e in resumen.errores:
+        if e.get("id_local") is None:
+            print(f"Error: {e.get('codigo')}: {e.get('mensaje')}", file=sys.stderr)
+    print(_tabla(ctx.cola.listar()))
+    return 0
+
+
+def _esperar(ctx, args) -> int:
+    try:
+        trabajos = esperar(ctx, args.id_local, tope_min=args.tope_min)
+    except KeyboardInterrupt:
+        print("Interrumpido; los trabajos siguen en la cola (consulta `yti estado`).", file=sys.stderr)
+        return 130
+    print(_tabla(trabajos))
+    return 0
+
+
+def _lista(ctx, args) -> int:
+    print(ctx.biblioteca.formatear_lista(ctx.biblioteca.listar(args.buscar)))
+    return 0
+
+
+def _mcp() -> int:
+    importlib.import_module("yti_cliente.mcp_server").ejecutar()
+    return 0
+
+
+def _ejecutar(args) -> int:
+    if args.comando == "config":
+        return _config(args)
+    cfg = cargar_config()
+    configurar_registro(claves_cargadas(cfg))
+    if args.comando == "mcp":
+        return _mcp()
+    ctx = crear_contexto(cfg)
+    if args.comando == "encolar":
+        return _encolar(ctx, args)
+    if args.comando == "estado":
+        return _estado(ctx)
+    if args.comando == "esperar":
+        return _esperar(ctx, args)
+    return _lista(ctx, args)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        return _ejecutar(args)
+    except (ErrorLocal, ErrorConfig, EsquemaMasNuevo) as e:
+        print(f"Error: {e}", file=sys.stderr)
+    except KeyboardInterrupt:
+        print("Interrumpido.", file=sys.stderr)
+        return 130
+    except Exception as e:  # noqa: BLE001 - la terminal no muestra trazas
+        print(f"Error inesperado ({type(e).__name__}): {' '.join(str(e).split())}", file=sys.stderr)
+    return 1
