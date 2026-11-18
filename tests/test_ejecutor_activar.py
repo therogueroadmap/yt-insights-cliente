@@ -526,3 +526,45 @@ def test_analisis_nulo_en_modo_analisis_avisa(env):
     assert actual["estado"] == "en_biblioteca"
     assert "no devolvió el análisis" in actual["aviso"]
     assert any("no devolvió el análisis" in a for a in resumen.avisos)
+
+
+def test_excepcion_generica_antes_del_post_libera_el_trabajo(env, monkeypatch):
+    from yti_cliente import ejecutor
+
+    a = env.sembrar("por_enviar")
+    b = env.sembrar("por_enviar")
+    original = ejecutor.enviar
+
+    def falla_el_primero(ctx, trabajo):
+        if trabajo["id_local"] == a["id_local"]:
+            raise RuntimeError("fallo inesperado antes del POST")
+        return original(ctx, trabajo)
+
+    monkeypatch.setattr(ejecutor, "enviar", falla_el_primero)
+    env.router.get("/v1/jobs/remoto-1").respond(json={"estado": "pendiente", "intentos": 0})
+    resumen = activar(env.ctx)
+    liberado = env.leer(a)
+    assert liberado["estado"] == "por_enviar"
+    assert liberado["tomado_por"] is None and liberado["tomado_en"] is None
+    assert env.leer(b)["estado"] == "enviado"
+    assert any(e["id_local"] == a["id_local"] for e in resumen.errores)
+
+
+def test_excepcion_con_id_remoto_no_libera_el_trabajo(env, monkeypatch):
+    from yti_cliente import ejecutor
+
+    a = env.sembrar("por_enviar")
+    def falla_con_remoto(ctx, trabajo):
+        ctx.cola.actualizar_si(
+            trabajo["id_local"],
+            {"estado": "enviando", "tomado_por": ctx.cola.id_proceso},
+            {"id_remoto": "remoto-ya-creado"},
+        )
+        raise RuntimeError("fallo tras el POST")
+
+    monkeypatch.setattr(ejecutor, "enviar", falla_con_remoto)
+    resumen = activar(env.ctx)
+    guardado = env.leer(a)
+    assert guardado["id_remoto"] == "remoto-ya-creado"
+    assert guardado["estado"] == "enviando"
+    assert any(e["id_local"] == a["id_local"] for e in resumen.errores)

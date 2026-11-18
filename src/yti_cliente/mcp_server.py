@@ -19,12 +19,14 @@ from yti_cliente.ejecutor import (
     hay_activos,
     registrar,
 )
-from yti_cliente.registro import configurar_registro
+from yti_cliente.registro import configurar_registro, redactar
 from yti_cliente.youtube import UrlNoAdmitida, extraer_video_id
 
 log = logging.getLogger(__name__)
 
 INTERVALO_SONDEO_S = 180
+# Igual al plazo HTTP por defecto de ClienteApi (api.py, plazo_s=30.0): máximo que se espera un envío al apagar.
+TOPE_APAGADO_S = 30.0
 _ESTADOS_ACTIVOS = ("por_enviar", "enviando", "enviado", "retenido")
 _INSTRUCCIONES = (
     "Encola videos de YouTube para analizarlos (encolar_video), consulta el avance de la cola "
@@ -87,13 +89,14 @@ class Servicio:
         except Exception as e:
             log.exception("No se pudo actualizar la cola")
             lineas.append(f"No se pudo actualizar la cola ({type(e).__name__}); se muestra el último estado.")
+        # Se vacía solo tras leer la cola con éxito; si falla, el aviso sigue pendiente.
         bajados = self._bajados_sin_informar
-        self._bajados_sin_informar = []
         try:
             trabajos = await asyncio.to_thread(self.ctx.cola.listar)
         except Exception as e:
             log.exception("No se pudo leer la cola")
             return f"No se pudo leer la cola local ({type(e).__name__})."
+        self._bajados_sin_informar = []
         pendientes = [t for t in trabajos if t.get("estado") != "en_biblioteca"]
         if not pendientes and not bajados and not lineas:
             return "La cola está vacía."
@@ -122,9 +125,11 @@ class Servicio:
             bib = self.ctx.biblioteca
             entradas = await asyncio.to_thread(bib.listar, buscar)
             return bib.formatear_lista(entradas)
-        except OSError as e:
+        except Exception as e:
             log.exception("No se pudo leer la biblioteca")
-            return f"No se pudo leer la biblioteca ({type(e).__name__})."
+            cfg = self.ctx.cfg
+            mensaje = redactar(str(e), (cfg.clave_yti, cfg.clave_gemini, cfg.clave_anthropic))
+            return f"No se pudo leer la biblioteca ({type(e).__name__}: {mensaje})."
 
     async def leer_resultado(
         self, video: str, objetivo: str | None = None, contenido: str = "analisis"
@@ -144,7 +149,16 @@ class Servicio:
             log.exception("No se pudo leer el resultado")
             return f"No se pudo leer el resultado ({type(e).__name__})."
 
-    async def esperar_fondo(self) -> None:
+    def registrar_bajados(self, bajados: list[dict]) -> None:
+        """Guarda los trabajos recién bajados para que el próximo ver_cola los anuncie."""
+        self._bajados_sin_informar.extend(bajados)
+
+    async def esperar_fondo(self, timeout: float | None = None) -> None:
+        if timeout is not None:
+            # Con tope no se cancelan los envíos en curso; los que queden tomados vencen solos.
+            if self._tareas:
+                await asyncio.wait(list(self._tareas), timeout=timeout)
+            return
         while self._tareas:
             await asyncio.gather(*list(self._tareas))
 
@@ -155,7 +169,7 @@ async def ciclo_sondeo(servicio: Servicio, *, intervalo_s: float = INTERVALO_SON
         try:
             if await asyncio.to_thread(hay_activos, servicio.ctx):
                 resumen = await asyncio.to_thread(activar, servicio.ctx)
-                servicio._bajados_sin_informar.extend(resumen.bajados)
+                servicio.registrar_bajados(resumen.bajados)
         except Exception:
             log.exception("Falló el sondeo periódico; se reintenta en el próximo intervalo")
 
@@ -170,6 +184,7 @@ def construir_servidor(servicio: Servicio) -> MCPServer:
             tarea.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await tarea
+            await servicio.esperar_fondo(timeout=TOPE_APAGADO_S)
 
     servidor = MCPServer("yt-insights", instructions=_INSTRUCCIONES, lifespan=lifespan)
     servidor.add_tool(servicio.encolar_video, name="encolar_video")

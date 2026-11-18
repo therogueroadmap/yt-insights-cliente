@@ -615,6 +615,17 @@ def _sondear(ctx: Contexto, api: ClienteApi, trabajo: dict, resumen: ResumenActi
         resumen.errores.append({"id_local": id_local, **(trabajo.get("error") or {})})
 
 
+def _liberar_si_sin_remoto(ctx: Contexto, trabajo: dict) -> None:
+    """Devuelve a `por_enviar` un trabajo que falló sin `id_remoto`; si ya lo tiene, no se toca."""
+    try:
+        guardado = ctx.cola.leer(trabajo["id_local"])
+        if trabajo.get("id_remoto") or guardado.get("id_remoto"):
+            return
+        _cambiar(ctx, trabajo, {"estado": "por_enviar"}, liberar=True)
+    except Exception:  # toma perdida u otro fallo: la toma vence sola a los 10 min
+        log.exception("No se pudo liberar el trabajo %s", trabajo["id_local"])
+
+
 def activar(ctx: Contexto) -> ResumenActivacion:
     """Pasos 1 a 3 de §9.3: envía lo pendiente, sondea lo enviado y baja lo completado."""
     resumen = ResumenActivacion([], [], [], [])
@@ -624,8 +635,9 @@ def activar(ctx: Contexto) -> ResumenActivacion:
         except ErrorLocal as e:
             resumen.errores.append({"id_local": trabajo["id_local"], "codigo": e.codigo, "mensaje": e.mensaje})
             continue
-        except Exception as e:  # un trabajo no aborta la activación (la toma vence sola a los 10 min)
+        except Exception as e:  # un trabajo no aborta la activación
             log.exception("Falló el envío del trabajo %s", trabajo["id_local"])
+            _liberar_si_sin_remoto(ctx, trabajo)
             resumen.errores.append(
                 {"id_local": trabajo["id_local"], "codigo": "ERROR_LOCAL", "mensaje": _limpio(ctx, str(e))}
             )

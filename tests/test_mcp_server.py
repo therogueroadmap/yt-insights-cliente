@@ -302,3 +302,50 @@ async def test_ver_cola_etiqueta_general_sin_objetivo(env):
     )
     texto = await env.servicio.ver_cola()
     assert "general" in texto and "solo transcripción" not in texto
+
+
+async def test_ver_cola_conserva_avisos_si_falla_la_lectura(env, monkeypatch):
+    env.servicio.registrar_bajados([{"video_id": VID, "objetivo": OBJETIVO, "modo": "analisis"}])
+    original = env.ctx.cola.listar
+
+    def roto():
+        raise OSError("cola ilegible")
+
+    monkeypatch.setattr(env.ctx.cola, "listar", roto)
+    texto = await env.servicio.ver_cola()
+    assert "No se pudo leer la cola" in texto
+    monkeypatch.setattr(env.ctx.cola, "listar", original)
+    texto = await env.servicio.ver_cola()
+    assert "Recién bajados" in texto and VID in texto
+
+
+async def test_apagado_espera_envio_en_curso(env, monkeypatch):
+    import time
+
+    terminados = []
+
+    def lento(ctx, trabajo):
+        time.sleep(0.2)
+        terminados.append(trabajo["id_local"])
+
+    async def ciclo_quieto(servicio, **kw):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(mcp_server, "enviar", lento)
+    monkeypatch.setattr(mcp_server, "ciclo_sondeo", ciclo_quieto)
+    async with Client(construir_servidor(env.servicio)) as cliente:
+        await cliente.call_tool("encolar_video", {"url": URL, "objetivo": OBJETIVO})
+        assert env.servicio._tareas
+    assert len(terminados) == 1
+
+
+async def test_listar_biblioteca_error_inesperado_es_texto_redactado(env, monkeypatch):
+    def roto(buscar=None):
+        raise ValueError(f"fallo con la clave {CLAVE_YTI}")
+
+    monkeypatch.setattr(env.ctx.biblioteca, "listar", roto)
+    texto = await env.servicio.listar_biblioteca()
+    assert "No se pudo leer la biblioteca" in texto
+    assert "ValueError" in texto
+    assert CLAVE_YTI not in texto
+    assert "***" in texto
