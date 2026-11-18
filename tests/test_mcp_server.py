@@ -279,3 +279,26 @@ async def test_salidas_sin_claves_ni_stdout(env, capsys):
         for clave in CLAVES:
             assert clave not in texto
     assert capsys.readouterr().out == ""
+
+
+async def test_ver_cola_anuncia_lo_que_bajo_el_sondeo_de_fondo(env):
+    _sembrar_enviado(env.ctx)
+    env.router.get("/v1/jobs/remoto-1").respond(json=_vista_completada())
+    tarea = asyncio.create_task(ciclo_sondeo(env.servicio, intervalo_s=0.01))
+    await asyncio.sleep(0.3)
+    tarea.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await tarea
+    texto = await env.servicio.ver_cola()
+    assert "Recién bajados" in texto and VID in texto
+    assert "vacía" in (await env.servicio.ver_cola()).lower()  # se vacía tras informar
+
+
+async def test_ver_cola_etiqueta_general_sin_objetivo(env):
+    env.ctx.cola.liberar(
+        env.ctx.cola.crear({"url": URL, "video_id": VID, "modo": "analisis", "objetivo": None,
+                            "objetivo_normalizado": "general", "testigo_estado": "sin_subtitulos"}),
+        estado="retenido", enviar_despues="2099-01-01T00:00:00Z",
+    )
+    texto = await env.servicio.ver_cola()
+    assert "general" in texto and "solo transcripción" not in texto

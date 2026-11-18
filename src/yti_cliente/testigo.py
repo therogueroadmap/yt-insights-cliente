@@ -2,13 +2,14 @@
 
 import logging
 import tempfile
+import urllib.error
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yt_dlp
-from yt_dlp.networking.exceptions import TransportError
+from yt_dlp.networking.exceptions import HTTPError, TransportError
 
 from yti_cliente import vtt
 
@@ -89,6 +90,7 @@ def elegir_pista(info: dict) -> tuple[str, str] | None:
 
 
 def _es_error_de_red(exc: BaseException) -> bool:
+    hay_red = False
     visitadas: set[int] = set()
     pendientes: list[BaseException | None] = [exc]
     while pendientes:
@@ -96,14 +98,16 @@ def _es_error_de_red(exc: BaseException) -> bool:
         if actual is None or id(actual) in visitadas:
             continue
         visitadas.add(id(actual))
+        if isinstance(actual, (HTTPError, urllib.error.HTTPError)):
+            return False  # hubo respuesta HTTP (p. ej. 429 o 403 de YouTube): no es falta de red
         if isinstance(actual, (OSError, TransportError)):
-            return True
+            hay_red = True
         info = getattr(actual, "exc_info", None)
         if isinstance(info, tuple) and len(info) > 1:
             pendientes.append(info[1])
         pendientes.append(actual.__cause__)
         pendientes.append(actual.__context__)
-    return False
+    return hay_red
 
 
 def _motivo(exc: Exception) -> str:
@@ -165,5 +169,5 @@ def obtener_testigo(
         )
     contenido = crudo.decode("utf-8", errors="replace")
     if vtt.contar_segmentos(contenido) == 0:
-        return ResultadoTestigo("sin_subtitulos", None, idioma, None, info_video)
+        return ResultadoTestigo("sin_subtitulos", None, idioma, "el VTT no tiene segmentos", info_video)
     return ResultadoTestigo("obtenido", contenido, idioma, None, info_video)

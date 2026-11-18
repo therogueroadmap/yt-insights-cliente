@@ -392,7 +392,7 @@ def test_version_incompatible_no_envia(env):
     env.router.get("/openapi.json").respond(json={"info": {"version": "0.3.0"}})
     r = encolar(env.ctx, URL)
     assert env.post.call_count == 0
-    assert "/health/vivo" not in env.paginas
+    assert env.paginas[:2] == ["/health/vivo", "/openapi.json"]
     assert r.trabajo["estado"] == "por_enviar"
     assert "uv tool upgrade yt-insights-cliente" in r.mensaje
 
@@ -438,3 +438,43 @@ def test_sin_claves_en_trabajo_ni_mensajes(env):
         assert not any(c in texto for c in claves)
     for m in mensajes:
         assert not any(c in m for c in claves)
+
+
+def test_despertar_antes_del_chequeo_de_version(env):
+    encolar(env.ctx, URL)
+    assert env.paginas.index("/health/vivo") < env.paginas.index("/openapi.json")
+
+
+def test_toma_se_renueva_antes_del_post(env, monkeypatch):
+    from yti_cliente import ejecutor
+
+    vistos = []
+    original = ejecutor._post
+
+    def espia(ctx, api, trabajo):
+        vistos.append(trabajo["tomado_en"])
+        return original(ctx, api, trabajo)
+
+    monkeypatch.setattr(ejecutor, "_post", espia)
+    registro = registrar(env.ctx, URL)
+    registro.trabajo["tomado_en"] = "2026-11-18T00:00:00Z"
+    env.ctx.cola.guardar(registro.trabajo)
+    enviar(env.ctx, registro.trabajo)
+    assert vistos == ["2026-11-18T14:25:30Z"]
+
+
+def test_dos_registros_misma_url_crean_un_trabajo(env):
+    import threading
+
+    resultados = []
+
+    def lanzar():
+        resultados.append(registrar(env.ctx, URL))
+
+    hilos = [threading.Thread(target=lanzar) for _ in range(4)]
+    for h in hilos:
+        h.start()
+    for h in hilos:
+        h.join()
+    assert len(_json_cola(env.ctx)) == 1
+    assert sum(1 for r in resultados if not r.duplicado) == 1

@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from filelock import FileLock
 
-from yti_cliente.archivos import escribir_atomico
+from yti_cliente.archivos import escribir_atomico, reintentar_permiso
 
 log = logging.getLogger(__name__)
 
@@ -75,11 +75,11 @@ class Cola:
             escribir_atomico(self.raiz / "version", f"{ESQUEMA}\n")
             return
         except ValueError:
-            raise EsquemaMasNuevo("El archivo .yti/version es ilegible; actualiza yti-insights-cliente.")
+            raise EsquemaMasNuevo("El archivo .yti/version es ilegible; actualiza yt-insights-cliente con «uv tool upgrade yt-insights-cliente».")
         if version > ESQUEMA:
             raise EsquemaMasNuevo(
                 f"La biblioteca usa el esquema {version} y este cliente solo conoce el {ESQUEMA}; "
-                "actualiza yti-insights-cliente."
+                "actualiza yt-insights-cliente con «uv tool upgrade yt-insights-cliente»."
             )
 
     def _ruta(self, id_local: str) -> Path:
@@ -106,7 +106,8 @@ class Cola:
             return trabajo
 
     def leer(self, id_local: str) -> dict:
-        return json.loads(self._ruta(id_local).read_text(encoding="utf-8"))
+        ruta = self._ruta(id_local)
+        return json.loads(reintentar_permiso(lambda: ruta.read_text(encoding="utf-8")))
 
     def guardar(self, trabajo: dict) -> None:
         with self.candado():
@@ -118,9 +119,11 @@ class Cola:
         trabajos = []
         for ruta in sorted(self._trabajos.glob("*.json")):
             try:
-                trabajo = json.loads(ruta.read_text(encoding="utf-8"))
+                trabajo = json.loads(reintentar_permiso(lambda: ruta.read_text(encoding="utf-8")))
                 if not isinstance(trabajo, dict) or "id_local" not in trabajo:
                     raise ValueError("no es un trabajo")
+                if ruta.stem != trabajo["id_local"]:
+                    raise ValueError("el nombre no coincide con su id_local (¿copia de conflicto?)")
             except (OSError, ValueError) as e:
                 log.warning("Se omite el archivo de cola %s: %s", ruta.name, e)
                 continue

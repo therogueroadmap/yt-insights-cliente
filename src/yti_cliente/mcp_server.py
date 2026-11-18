@@ -33,10 +33,17 @@ _INSTRUCCIONES = (
 )
 
 
+def _etiqueta(t: dict) -> str:
+    if t.get("objetivo"):
+        return t["objetivo"]
+    return "general" if t.get("modo") == "analisis" else "solo transcripción"
+
+
 class Servicio:
     def __init__(self, ctx: Contexto):
         self.ctx = ctx
         self._tareas: set[asyncio.Task] = set()
+        self._bajados_sin_informar: list[dict] = []
 
     async def _enviar_fondo(self, trabajo: dict) -> None:
         try:
@@ -73,14 +80,15 @@ class Servicio:
     async def ver_cola(self) -> str:
         """Actualiza y muestra el estado de la cola local y baja a la biblioteca los resultados listos."""
         lineas: list[str] = []
-        bajados: list[dict] = []
         try:
             resumen = await asyncio.to_thread(activar, self.ctx)
-            bajados = resumen.bajados
+            self._bajados_sin_informar.extend(resumen.bajados)
             lineas.extend(f"Aviso: {a}" for a in resumen.avisos)
         except Exception as e:
             log.exception("No se pudo actualizar la cola")
             lineas.append(f"No se pudo actualizar la cola ({type(e).__name__}); se muestra el último estado.")
+        bajados = self._bajados_sin_informar
+        self._bajados_sin_informar = []
         try:
             trabajos = await asyncio.to_thread(self.ctx.cola.listar)
         except Exception as e:
@@ -91,7 +99,7 @@ class Servicio:
             return "La cola está vacía."
         for t in pendientes:
             estado = t.get("estado")
-            detalle = t.get("objetivo") or "solo transcripción"
+            detalle = _etiqueta(t)
             linea = f"- {t.get('id_local')} ({t.get('video_id')}, {detalle}): {estado}"
             if estado in _ESTADOS_ACTIVOS:
                 linea += f"; tiempo estimado: {estimacion(t.get('duracion_s'))}"
@@ -105,7 +113,7 @@ class Servicio:
             lineas.append("")
             lineas.append("Recién bajados (pídelos con leer_resultado):")
             for t in bajados:
-                lineas.append(f"- {t.get('video_id')}: {t.get('objetivo') or 'solo transcripción'}")
+                lineas.append(f"- {t.get('video_id')}: {_etiqueta(t)}")
         return "\n".join(lineas)
 
     async def listar_biblioteca(self, buscar: str | None = None) -> str:
@@ -146,7 +154,8 @@ async def ciclo_sondeo(servicio: Servicio, *, intervalo_s: float = INTERVALO_SON
         await asyncio.sleep(intervalo_s)
         try:
             if await asyncio.to_thread(hay_activos, servicio.ctx):
-                await asyncio.to_thread(activar, servicio.ctx)
+                resumen = await asyncio.to_thread(activar, servicio.ctx)
+                servicio._bajados_sin_informar.extend(resumen.bajados)
         except Exception:
             log.exception("Falló el sondeo periódico; se reintenta en el próximo intervalo")
 

@@ -370,3 +370,28 @@ def test_mensajes_sin_claves(mock, cliente):
         cliente.consultar("abc")
     for clave in CLAVES:
         assert clave not in str(e.value)
+
+
+def test_contrato_fallo_de_red_no_se_cachea(mock, cliente, tmp_path):
+    ruta = mock.get("/openapi.json").mock(side_effect=httpx.ReadTimeout("frío"))
+    cache = tmp_path / "contrato.json"
+    assert contrato_compatible(cliente, cache, T0) is True
+    assert not cache.exists()
+    ruta.mock(side_effect=None)
+    ruta.respond(200, json={"info": {"version": "0.3.0"}})
+    assert contrato_compatible(cliente, cache, T0 + timedelta(minutes=3)) is False
+    assert cache.exists()
+
+
+def test_contrato_5xx_no_se_cachea(mock, cliente, tmp_path):
+    mock.get("/openapi.json").respond(503)
+    cache = tmp_path / "contrato.json"
+    assert contrato_compatible(cliente, cache, T0) is True
+    assert not cache.exists()
+
+
+def test_contrato_404_si_se_cachea(mock, cliente, tmp_path):
+    mock.get("/openapi.json").respond(404)
+    cache = tmp_path / "contrato.json"
+    assert contrato_compatible(cliente, cache, T0) is True
+    assert cache.exists()

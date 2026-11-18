@@ -332,6 +332,9 @@ class Biblioteca:
 
         if objetivo is not None and objetivo.strip():
             ruta = self.buscar_analisis(entrada.video_id, objetivo)
+            if ruta is None and normalizar_objetivo(objetivo) == "general":
+                # «general» es la etiqueta que muestran listar_biblioteca e indice.md para el análisis sin objetivo
+                ruta = self.buscar_analisis(entrada.video_id, None)
             if ruta is None:
                 disponibles = ", ".join(entrada.objetivos) or "ninguno (solo transcripción)"
                 return con_pie(

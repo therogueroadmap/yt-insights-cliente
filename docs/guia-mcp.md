@@ -12,6 +12,8 @@ Si aun así prefieres variables de entorno, las admitidas son `YTI_API_KEY`, `YT
 
 ## 2. Bloque de configuración
 
+> Nota: mientras el paquete no esté publicado en PyPI, los bloques usan `uvx --from git+https://github.com/therogueroadmap/yt-insights-cliente yti mcp`. Al publicarlo, podrás usar `uvx --from yt-insights-cliente yti mcp`.
+
 Con las claves ya guardadas por `yti config`, el bloque mínimo es este:
 
 ```json
@@ -19,7 +21,7 @@ Con las claves ya guardadas por `yti config`, el bloque mínimo es este:
   "mcpServers": {
     "yt-insights": {
       "command": "uvx",
-      "args": ["--from", "yt-insights-cliente", "yti", "mcp"],
+      "args": ["--from", "git+https://github.com/therogueroadmap/yt-insights-cliente", "yti", "mcp"],
       "env": {}
     }
   }
@@ -33,7 +35,7 @@ Si prefieres pasar las claves por variables de entorno (queda en texto plano en 
   "mcpServers": {
     "yt-insights": {
       "command": "uvx",
-      "args": ["--from", "yt-insights-cliente", "yti", "mcp"],
+      "args": ["--from", "git+https://github.com/therogueroadmap/yt-insights-cliente", "yti", "mcp"],
       "env": {
         "YTI_API_KEY": "…",
         "YTI_GEMINI_KEY": "…",
@@ -60,7 +62,7 @@ Después de editar el archivo, reinicia el host por completo.
 
 ### Claude Code
 
-- Comando: `claude mcp add --transport stdio yt-insights -- uvx --from yt-insights-cliente yti mcp`
+- Comando: `claude mcp add --transport stdio yt-insights -- uvx --from git+https://github.com/therogueroadmap/yt-insights-cliente yti mcp`
 - Alcances (`--scope` o `-s`): `local` (por defecto, solo tú y el proyecto actual, en `~/.claude.json`), `user` (todos tus proyectos, en `~/.claude.json`) y `project` (archivo `.mcp.json` en la raíz del proyecto, compartido por control de versiones).
 - Formato de `.mcp.json`: JSON con `mcpServers`, igual que la sección 2. No guardes claves en un `.mcp.json` que vayas a versionar.
 - Fuente consultada: https://code.claude.com/docs/en/mcp
@@ -82,7 +84,7 @@ Después de editar el archivo, reinicia el host por completo.
     "yt-insights": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "yt-insights-cliente", "yti", "mcp"]
+      "args": ["--from", "git+https://github.com/therogueroadmap/yt-insights-cliente", "yti", "mcp"]
     }
   }
 }
@@ -105,10 +107,10 @@ Después de editar el archivo, reinicia el host por completo.
 ```toml
 [mcp_servers.yt-insights]
 command = "uvx"
-args = ["--from", "yt-insights-cliente", "yti", "mcp"]
+args = ["--from", "git+https://github.com/therogueroadmap/yt-insights-cliente", "yti", "mcp"]
 ```
 
-- Alternativa: `codex mcp add yt-insights -- uvx --from yt-insights-cliente yti mcp`.
+- Alternativa: `codex mcp add yt-insights -- uvx --from git+https://github.com/therogueroadmap/yt-insights-cliente yti mcp`.
 - Fuente consultada: https://learn.chatgpt.com/docs/extend/mcp?surface=cli (redirección desde https://developers.openai.com/codex/mcp)
 
 ### Windsurf

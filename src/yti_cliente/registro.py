@@ -27,6 +27,14 @@ class FiltroClaves(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.msg = redactar(record.getMessage(), self._claves)
         record.args = ()
+        if record.exc_info:
+            traza = logging.Formatter().formatException(record.exc_info)
+            record.exc_text = redactar(traza, self._claves)
+            record.exc_info = None
+        elif record.exc_text:
+            record.exc_text = redactar(record.exc_text, self._claves)
+        if record.stack_info:
+            record.stack_info = redactar(record.stack_info, self._claves)
         return True
 
 
@@ -53,6 +61,8 @@ def configurar_registro(
         logging.FileHandler(ruta, encoding="utf-8"),
         logging.StreamHandler(sys.stderr),
     ]
+    handlers[0].setLevel(logging.INFO)
+    handlers[1].setLevel(logging.WARNING)  # la consola solo muestra avisos y errores; el archivo, INFO
     for h in handlers:
         h.setFormatter(formato)
         h.addFilter(FiltroClaves(claves))

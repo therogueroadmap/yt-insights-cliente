@@ -1,6 +1,21 @@
 import os
 import tempfile
+import time
 from pathlib import Path
+
+REINTENTOS = 10
+ESPERA_S = 0.05
+
+
+def reintentar_permiso(accion):
+    """Ejecuta `accion()` reintentando ante PermissionError (Windows: otro lector tiene el archivo abierto)."""
+    for intento in range(REINTENTOS):
+        try:
+            return accion()
+        except PermissionError:
+            if intento == REINTENTOS - 1:
+                raise
+            time.sleep(ESPERA_S)
 
 
 def escribir_atomico(ruta: Path, texto: str) -> None:
@@ -11,7 +26,7 @@ def escribir_atomico(ruta: Path, texto: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(texto)
-        os.replace(temporal, ruta)
+        reintentar_permiso(lambda: os.replace(temporal, ruta))
     except BaseException:
         Path(temporal).unlink(missing_ok=True)
         raise

@@ -272,17 +272,25 @@ class ClienteApi:
             )
         return vista
 
-    def version_api(self) -> str | None:
+    def consultar_version(self) -> tuple[str | None, bool]:
+        """(versión, fallo_de_red). `fallo_de_red` es True si no hubo respuesta útil del servidor."""
         try:
             resp = self._http.get("/openapi.json")
+            if resp.status_code >= 500:
+                return None, True
             if resp.status_code != 200:
-                return None
+                return None, False
             cuerpo = resp.json()
-        except (httpx.HTTPError, ValueError):
-            return None
+        except httpx.HTTPError:
+            return None, True
+        except ValueError:
+            return None, False
         info = cuerpo.get("info") if isinstance(cuerpo, dict) else None
         version = info.get("version") if isinstance(info, dict) else None
-        return version if isinstance(version, str) else None
+        return (version if isinstance(version, str) else None), False
+
+    def version_api(self) -> str | None:
+        return self.consultar_version()[0]
 
 
 def _leer_cache(ruta: Path, ahora: datetime) -> tuple[bool, str | None]:
@@ -304,11 +312,13 @@ def contrato_compatible(cliente: ClienteApi, ruta_cache: Path, ahora: datetime) 
     """False solo si la versión conocida es incompatible; sin versión se asume compatible."""
     vigente, version = _leer_cache(ruta_cache, ahora)
     if not vigente:
-        version = cliente.version_api()
+        version, fallo_de_red = cliente.consultar_version()
         if version is None:
             log.warning(
                 "No se pudo comprobar la versión de la API; se asume compatible."
             )
+        if fallo_de_red:
+            return True  # no se cachea un fallo transitorio: se reintenta en la próxima activación
         escribir_atomico(
             ruta_cache,
             json.dumps(

@@ -184,3 +184,19 @@ def test_error_inesperado_una_linea(env, monkeypatch, capsys):
     assert cli.main(["estado"]) == 1
     err = capsys.readouterr().err.strip()
     assert len(err.splitlines()) == 1 and "Traceback" not in err
+
+
+def test_error_inesperado_redacta_claves(env, monkeypatch, capsys):
+    def falla(ctx):
+        raise OSError(f"fallo con {CLAVE_GEMINI} y {CLAVE_YTI}")
+
+    monkeypatch.setattr(cli, "activar", falla)
+    assert cli.main(["estado"]) == 1
+    err = capsys.readouterr().err
+    assert CLAVE_GEMINI not in err and CLAVE_YTI not in err and "***" in err
+
+
+def test_config_biblioteca_relativa_se_guarda_absoluta(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["config", "--biblioteca", "rel/bib"]) == 0
+    assert cargar_config(ruta_config(), {}).biblioteca == (tmp_path / "rel" / "bib").resolve()

@@ -14,6 +14,7 @@ from yti_cliente import testigo as _testigo
 from yti_cliente.api import (
     ClaveYtiInvalida,
     ClienteApi,
+    ContratoIncompatible,
     ErrorApi,
     RespuestaPerdida,
     ServicioNoDisponible,
@@ -161,49 +162,50 @@ def registrar(
     modo = "transcripcion" if solo_transcripcion else "analisis"
     normalizado = normalizar_objetivo(objetivo)
 
-    if not forzar:
-        existente = (
-            ctx.biblioteca.tiene_transcripcion(video_id)
-            if solo_transcripcion
-            else ctx.biblioteca.buscar_analisis(video_id, objetivo)
-        )
-        if existente is not None:
-            if proyecto:
-                ctx.biblioteca.agregar_a_proyecto(proyecto, video_id)
-            return ResultadoEncolar(
-                True,
-                _aviso_duplicado(f"Ya está en la biblioteca: {existente}", url),
-                None,
-                estimacion(None),
+    with ctx.cola.candado():
+        if not forzar:
+            existente = (
+                ctx.biblioteca.tiene_transcripcion(video_id)
+                if solo_transcripcion
+                else ctx.biblioteca.buscar_analisis(video_id, objetivo)
             )
-        activo = ctx.cola.buscar_activo(video_id, normalizado, modo)
-        if activo is not None:
-            if proyecto and not activo.get("proyecto"):
-                ctx.cola.actualizar_si(
-                    activo["id_local"], {"proyecto": activo.get("proyecto")}, {"proyecto": proyecto}
+            if existente is not None:
+                if proyecto:
+                    ctx.biblioteca.agregar_a_proyecto(proyecto, video_id)
+                return ResultadoEncolar(
+                    True,
+                    _aviso_duplicado(f"Ya está en la biblioteca: {existente}", url),
+                    None,
+                    estimacion(None),
                 )
-            return ResultadoEncolar(
-                True,
-                _aviso_duplicado(f"Ya está en la cola con el id {activo['id_local']}", url),
-                activo,
-                estimacion(activo.get("duracion_s")),
-            )
+            activo = ctx.cola.buscar_activo(video_id, normalizado, modo)
+            if activo is not None:
+                if proyecto and not activo.get("proyecto"):
+                    ctx.cola.actualizar_si(
+                        activo["id_local"], {"proyecto": activo.get("proyecto")}, {"proyecto": proyecto}
+                    )
+                return ResultadoEncolar(
+                    True,
+                    _aviso_duplicado(f"Ya está en la cola con el id {activo['id_local']}", url),
+                    activo,
+                    estimacion(activo.get("duracion_s")),
+                )
 
-    _verificar_claves(ctx.cfg, modo)
-    trabajo = ctx.cola.crear(
-        {
-            "url": url,
-            "video_id": video_id,
-            "modo": modo,
-            "objetivo": objetivo,
-            "objetivo_normalizado": normalizado,
-            "proyecto": proyecto,
-            "testigo_estado": "desactivado" if sin_testigo else "pendiente",
-        }
-    )
-    return ResultadoEncolar(
-        False, f"Trabajo {trabajo['id_local']} registrado.", trabajo, estimacion(None)
-    )
+        _verificar_claves(ctx.cfg, modo)
+        trabajo = ctx.cola.crear(
+            {
+                "url": url,
+                "video_id": video_id,
+                "modo": modo,
+                "objetivo": objetivo,
+                "objetivo_normalizado": normalizado,
+                "proyecto": proyecto,
+                "testigo_estado": "desactivado" if sin_testigo else "pendiente",
+            }
+        )
+        return ResultadoEncolar(
+            False, f"Trabajo {trabajo['id_local']} registrado.", trabajo, estimacion(None)
+        )
 
 
 # --- enviar ---
@@ -331,6 +333,7 @@ def _enviar(ctx: Contexto, trabajo: dict) -> dict:
         return trabajo
     with ctx.api() as api:
         try:
+            api.despertar()
             if not contrato_compatible(api, ctx.ruta_cache_version, ctx.reloj()):
                 _cambiar(
                     ctx, trabajo,
@@ -338,7 +341,8 @@ def _enviar(ctx: Contexto, trabajo: dict) -> dict:
                     liberar=True,
                 )
                 return trabajo
-            api.despertar()
+            # Renueva la toma justo antes del POST: un lote lento no deja que otro proceso la tome (§9.3).
+            _cambiar(ctx, trabajo, {"tomado_en": iso(ctx.reloj())}, liberar=False)
             id_remoto = _post(ctx, api, trabajo)
         except TopeDiario as e:
             ahora = ctx.reloj()
@@ -539,6 +543,9 @@ def bajar_resultado(ctx: Contexto, trabajo: dict, vista: dict) -> dict:
             cuerpo,
         )
         analisis = resultado.get("analisis")
+        aviso = None
+        if trabajo.get("modo") == "analisis" and not isinstance(analisis, dict):
+            aviso = "el servidor no devolvió el análisis; solo se guardó la transcripción"
         if trabajo.get("modo") == "analisis" and isinstance(analisis, dict):
             bib.escribir_analisis(
                 video_id, titulo, trabajo.get("objetivo"),
@@ -558,6 +565,8 @@ def bajar_resultado(ctx: Contexto, trabajo: dict, vista: dict) -> dict:
         bib.regenerar_indice()
         ctx.cola.borrar_testigo(id_local)
         cambios = {"estado": "en_biblioteca", "estado_remoto": "completado", "uso": uso, "error": None}
+        if aviso:
+            cambios["aviso"] = aviso
         actualizado = ctx.cola.actualizar_si(id_local, {"id_remoto": id_remoto}, cambios)
         if actualizado is not None:
             trabajo.clear()
@@ -579,12 +588,23 @@ def _sondear(ctx: Contexto, api: ClienteApi, trabajo: dict, resumen: ResumenActi
         return
     except ServicioNoDisponible:
         return
-    except ErrorApi as e:  # p. ej. ContratoIncompatible: puede ser pasajero, sin cambio
+    except ContratoIncompatible:
+        # §10.3: falta `estado`; se marca error y se conserva el id_remoto
+        _poner_error(
+            ctx, trabajo, "CONTRATO_INCOMPATIBLE",
+            "La vista del trabajo no incluye el campo estado; " + _AVISO_VERSION,
+        )
+        if trabajo.get("estado") == "error":
+            resumen.errores.append({"id_local": id_local, **(trabajo.get("error") or {})})
+        return
+    except ErrorApi as e:
         resumen.avisos.append(f"{id_local}: {_limpio(ctx, e.mensaje)}")
         return
     estado = vista.get("estado")
     if estado == "completado":
         bajar_resultado(ctx, trabajo, vista)
+        if trabajo.get("estado") == "en_biblioteca" and trabajo.get("aviso"):
+            resumen.avisos.append(f"{id_local}: {trabajo['aviso']}")
     elif estado == "error":
         _error_remoto(ctx, trabajo, vista.get("error") or {})
     else:
@@ -604,6 +624,12 @@ def activar(ctx: Contexto) -> ResumenActivacion:
         except ErrorLocal as e:
             resumen.errores.append({"id_local": trabajo["id_local"], "codigo": e.codigo, "mensaje": e.mensaje})
             continue
+        except Exception as e:  # un trabajo no aborta la activación (la toma vence sola a los 10 min)
+            log.exception("Falló el envío del trabajo %s", trabajo["id_local"])
+            resumen.errores.append(
+                {"id_local": trabajo["id_local"], "codigo": "ERROR_LOCAL", "mensaje": _limpio(ctx, str(e))}
+            )
+            continue
         estado = trabajo.get("estado")
         if estado == "enviado":
             resumen.enviados.append(trabajo)
@@ -616,7 +642,14 @@ def activar(ctx: Contexto) -> ResumenActivacion:
         try:
             with ctx.api() as api:
                 for trabajo in enviados:
-                    _sondear(ctx, api, trabajo, resumen)
+                    try:
+                        _sondear(ctx, api, trabajo, resumen)
+                    except Exception as e:
+                        log.exception("Falló el sondeo del trabajo %s", trabajo["id_local"])
+                        resumen.errores.append(
+                            {"id_local": trabajo["id_local"], "codigo": "ERROR_LOCAL",
+                             "mensaje": _limpio(ctx, str(e))}
+                        )
         except ErrorLocal as e:
             resumen.errores.append({"id_local": None, "codigo": e.codigo, "mensaje": e.mensaje})
     return resumen

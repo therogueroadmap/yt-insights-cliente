@@ -450,3 +450,79 @@ def test_esperar_todos_los_activos(env):
 
 def test_esperar_sin_activos(env):
     assert esperar(env.ctx, dormir=lambda s: pytest.fail("no debía dormir")) == []
+
+
+# --- fixes de la revisión final ---
+
+
+def test_copia_de_conflicto_no_reenvia(env):
+    t = env.sembrar("por_enviar")
+    env.router.get("/v1/jobs/remoto-1").respond(json={"estado": "pendiente", "intentos": 0})
+    carpeta = env.raiz / ".yti" / "trabajos"
+    copia = carpeta / f"{t['id_local']} (conflicted copy).json"
+    copia.write_text((carpeta / f"{t['id_local']}.json").read_text(encoding="utf-8"), encoding="utf-8")
+    for _ in range(4):
+        activar(env.ctx)
+    assert len(env.post.calls) == 1
+    assert env.leer(t)["id_remoto"] == "remoto-1"
+
+
+def test_activar_aisla_fallo_de_un_trabajo(env, monkeypatch):
+    from yti_cliente import ejecutor
+
+    a = env.sembrar("por_enviar")
+    b = env.sembrar("por_enviar")
+    original = ejecutor.enviar
+
+    def falla_el_primero(ctx, trabajo):
+        if trabajo["id_local"] == a["id_local"]:
+            raise OSError("disco")
+        return original(ctx, trabajo)
+
+    monkeypatch.setattr(ejecutor, "enviar", falla_el_primero)
+    env.router.get("/v1/jobs/remoto-1").respond(json={"estado": "pendiente", "intentos": 0})
+    resumen = activar(env.ctx)
+    assert env.leer(b)["estado"] == "enviado"
+    assert any(e["id_local"] == a["id_local"] for e in resumen.errores)
+
+
+def test_activar_aisla_fallo_de_sondeo(env, monkeypatch):
+    from yti_cliente import ejecutor
+
+    a = env.sembrar("enviado", id_remoto="r1")
+    b = env.sembrar("enviado", id_remoto="r2")
+    env.get(id_remoto="r2", json=vista_completada("analisis", id_remoto="r2"))
+    original = ejecutor._sondear
+
+    def falla(ctx, api, trabajo, resumen):
+        if trabajo["id_local"] == a["id_local"]:
+            raise TypeError("malformado")
+        return original(ctx, api, trabajo, resumen)
+
+    monkeypatch.setattr(ejecutor, "_sondear", falla)
+    resumen = activar(env.ctx)
+    assert env.leer(b)["estado"] == "en_biblioteca"
+    assert any(e["id_local"] == a["id_local"] for e in resumen.errores)
+
+
+def test_vista_sin_estado_es_contrato_incompatible(env):
+    t = env.sembrar("enviado")
+    env.get(json={"id": "r1"})
+    resumen = activar(env.ctx)
+    actual = env.leer(t)
+    assert actual["estado"] == "error"
+    assert actual["error"]["codigo"] == "CONTRATO_INCOMPATIBLE"
+    assert actual["id_remoto"] == "r1"
+    assert resumen.errores[0]["codigo"] == "CONTRATO_INCOMPATIBLE"
+
+
+def test_analisis_nulo_en_modo_analisis_avisa(env):
+    t = env.sembrar("enviado")
+    vista = vista_completada("analisis")
+    vista["resultado"]["analisis"] = None
+    env.get(json=vista)
+    resumen = activar(env.ctx)
+    actual = env.leer(t)
+    assert actual["estado"] == "en_biblioteca"
+    assert "no devolvió el análisis" in actual["aviso"]
+    assert any("no devolvió el análisis" in a for a in resumen.avisos)

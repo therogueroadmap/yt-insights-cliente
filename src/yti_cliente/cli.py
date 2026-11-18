@@ -4,6 +4,7 @@ import argparse
 import getpass
 import importlib
 import sys
+from pathlib import Path
 from typing import Sequence
 
 from yti_cliente.cola import EsquemaMasNuevo, desde_iso
@@ -24,7 +25,7 @@ from yti_cliente.ejecutor import (
     esperar,
     estimacion,
 )
-from yti_cliente.registro import configurar_registro
+from yti_cliente.registro import configurar_registro, redactar
 
 _CLAVES_CLI = {"yt-insights": "yt_insights", "gemini": "gemini", "anthropic": "anthropic"}
 _ORIGENES = {"entorno": "entorno", "archivo": "archivo", "defecto": "por defecto", "ausente": "sin configurar"}
@@ -84,8 +85,9 @@ def _config(args) -> int:
         guardar_valor(_CLAVES_CLI[args.clave], valor)
         print(f"Clave de {args.clave} guardada.")
     if args.biblioteca is not None:
-        guardar_valor("biblioteca", args.biblioteca)
-        print(f"Biblioteca: {args.biblioteca}")
+        ruta_biblioteca = str(Path(args.biblioteca).expanduser().resolve())
+        guardar_valor("biblioteca", ruta_biblioteca)
+        print(f"Biblioteca: {ruta_biblioteca}")
     if args.api_url is not None:
         guardar_valor("api_url", args.api_url)
         print(f"api_url: {args.api_url}")
@@ -185,6 +187,13 @@ def _ejecutar(args) -> int:
     return _lista(ctx, args)
 
 
+def _claves_a_redactar() -> list[str]:
+    try:
+        return list(claves_cargadas(cargar_config()))
+    except Exception:  # noqa: BLE001 - sin config legible no hay claves que redactar
+        return []
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -195,5 +204,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Interrumpido.", file=sys.stderr)
         return 130
     except Exception as e:  # noqa: BLE001 - la terminal no muestra trazas
-        print(f"Error inesperado ({type(e).__name__}): {' '.join(str(e).split())}", file=sys.stderr)
+        texto = redactar(" ".join(str(e).split()), _claves_a_redactar())
+        print(f"Error inesperado ({type(e).__name__}): {texto}", file=sys.stderr)
     return 1

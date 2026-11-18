@@ -232,3 +232,13 @@ def test_leer_resultado(bib):
     assert "analisis" in r and "transcripcion" in r
 
     assert "zzz" in bib.leer_resultado("zzz")
+
+
+def test_leer_resultado_objetivo_general(bib):
+    bib.escribir_transcripcion("V3", "Tres", front_t(video_id="V3", titulo="Tres"), "T3")
+    bib.escribir_analisis("V3", "Tres", "Migrar", front_a(video_id="V3", objetivo="Migrar"), "AN_MIGRAR")
+    bib.escribir_analisis("V3", "Tres", None, front_a(video_id="V3"), "AN_GENERAL")
+    r = bib.leer_resultado("V3", "general")
+    assert "AN_GENERAL" in r and "No hay un análisis" not in r
+    assert "AN_GENERAL" in bib.leer_resultado("V3", "General")
+    assert "No hay un análisis" in bib.leer_resultado("V3", "otro")

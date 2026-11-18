@@ -20,7 +20,7 @@ Requiere Python 3.11 o superior y [uv](https://docs.astral.sh/uv/).
 uv tool install git+https://github.com/therogueroadmap/yt-insights-cliente
 ```
 
-Ese es el remoto que creará el usuario en la organización `therogueroadmap`. Si el paquete se publica en PyPI, bastará con `uv tool install yt-insights-cliente`.
+Si el paquete se publica en PyPI, bastará con `uv tool install yt-insights-cliente`.
 
 ## Configuración: `yti config`
 
@@ -34,6 +34,16 @@ yti config --api-url https://yt-insights-api-f8y7.onrender.com
 ```
 
 No pases claves como argumentos de línea de comandos: quedarían en el historial del shell. Por eso `--clave` las pide con entrada oculta. Las variables de entorno `YTI_API_KEY`, `YTI_GEMINI_KEY`, `YTI_ANTHROPIC_KEY`, `YTI_BIBLIOTECA` y `YTI_API_URL` tienen prioridad sobre el archivo.
+
+### Dónde quedan `config.toml` y `yti.log`
+
+Las rutas las decide `platformdirs`:
+
+| Sistema | `config.toml` | `yti.log` |
+|---|---|---|
+| Windows | `%LOCALAPPDATA%\yt-insights-cliente\config.toml` | `%LOCALAPPDATA%\yt-insights-cliente\Logs\yti.log` |
+| macOS | `~/Library/Application Support/yt-insights-cliente/config.toml` | `~/Library/Logs/yt-insights-cliente/yti.log` |
+| Linux | `~/.config/yt-insights-cliente/config.toml` (o `$XDG_CONFIG_HOME`) | `~/.local/state/yt-insights-cliente/log/yti.log` (o `$XDG_STATE_HOME`) |
 
 ## Subcomandos
 

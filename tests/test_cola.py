@@ -163,3 +163,16 @@ def test_json_utf8_indentado(tmp_path, par):
     texto = (tmp_path / ".yti" / "trabajos" / f"{t['id_local']}.json").read_text(encoding="utf-8")
     assert "añadir" in texto and '\n  "' in texto
     assert json.loads(texto)["objetivo"] == "añadir"
+
+
+def test_listar_omite_copia_de_conflicto_valida(tmp_path, par, caplog):
+    a, _ = par
+    t = _por_enviar(a)
+    carpeta = tmp_path / ".yti" / "trabajos"
+    copia = carpeta / f"{t['id_local']} (conflicted copy).json"
+    copia.write_text((carpeta / f"{t['id_local']}.json").read_text(encoding="utf-8"), encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        lista = a.listar()
+    assert [x["id_local"] for x in lista] == [t["id_local"]]
+    assert any("conflict" in r.getMessage() for r in caplog.records)
+    assert len(a.tomar_para_envio()) == 1

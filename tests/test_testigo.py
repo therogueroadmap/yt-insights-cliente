@@ -210,3 +210,46 @@ def test_auto_usa_writeautomaticsub():
     f = fabrica(info)
     obtener_testigo("u", ydl_factory=f)
     assert f.creadas[1].opts["writeautomaticsub"] is True
+
+
+def test_http_429_de_youtube_es_fallido_no_sin_conexion():
+    import urllib.error
+
+    from yt_dlp.networking.exceptions import HTTPError
+
+    class Resp:
+        status = 429
+        reason = "Too Many Requests"
+        url = "https://youtube.test"
+        headers = {}
+
+        def read(self, *a):
+            return b""
+
+        def close(self):
+            pass
+
+    origen = urllib.error.HTTPError("https://youtube.test", 429, "Too Many Requests", {}, None)
+    try:
+        try:
+            raise origen
+        except urllib.error.HTTPError as e:
+            raise HTTPError(Resp()) from e
+    except HTTPError as http:
+        try:
+            raise DownloadError("HTTP Error 429") from None
+        except DownloadError as dl:
+            dl.__context__ = http
+            err = dl
+    r = obtener_testigo("u", ydl_factory=fabrica(INFO_ES, error_download=err))
+    assert r.estado == "fallido"
+
+
+def test_urllib_httperror_solo_es_fallido():
+    import urllib.error
+
+    origen = urllib.error.HTTPError("https://youtube.test", 403, "Forbidden", {}, None)
+    err = DownloadError("403")
+    err.__cause__ = origen
+    r = obtener_testigo("u", ydl_factory=fabrica(INFO_ES, error_download=err))
+    assert r.estado == "fallido"
