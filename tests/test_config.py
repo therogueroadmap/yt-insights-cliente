@@ -185,4 +185,6 @@ def test_idioma_del_sistema_windows_sin_api_cae_a_es(monkeypatch):
     monkeypatch.setattr("yti_cliente.config.sys.platform", "win32")
     monkeypatch.setattr("yti_cliente.config._locale_windows", lambda: None)
     monkeypatch.setattr("yti_cliente.config.locale.getlocale", lambda *a: ("Spanish_Spain", "1252"))
+    for v in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+        monkeypatch.delenv(v, raising=False)
     assert idioma_del_sistema() == "es"

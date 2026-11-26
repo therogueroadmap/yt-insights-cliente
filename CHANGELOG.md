@@ -7,6 +7,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [0.1.1] — 2026-11-26
+
+### Fixed
+- El cliente acepta la API 0.3.0 y posteriores (0.y.z desde 0.2.2). Antes solo admitía 0.2.x y dejaba los trabajos en `por_enviar` con el aviso de versión no compatible contra la API desplegada (0.3.0). 1.0 o mayor se sigue rechazando.
+
+---
+
 ## [0.1.0] — 2026-11-18
 
 Primera versión publicada.

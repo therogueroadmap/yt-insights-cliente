@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 PLAZO_DESPERTAR_S = 90.0
 VIGENCIA_CACHE = timedelta(hours=24)
 _FORMATO_FECHA = "%Y-%m-%dT%H:%M:%SZ"
-_RE_VERSION = re.compile(r"^0\.2\.(\d+)$")
+_RE_VERSION = re.compile(r"^0\.(\d+)\.(\d+)$")
 _RE_ENTERO = re.compile(r"^\d+$")
 
 
@@ -78,9 +78,9 @@ def parsear_retry_after(valor: str | None) -> int | None:
 
 
 def version_compatible(version: str) -> bool:
-    """Acepta 0.2.x con x >= 2."""
+    """Acepta 0.y.z desde 0.2.2: los cambios de la API en 0.x son aditivos en /v1/jobs. 1.0 o mayor se rechaza."""
     m = _RE_VERSION.match(version.strip()) if isinstance(version, str) else None
-    return m is not None and int(m.group(1)) >= 2
+    return m is not None and (int(m.group(1)), int(m.group(2))) >= (2, 2)
 
 
 def _detalle(resp: httpx.Response):
