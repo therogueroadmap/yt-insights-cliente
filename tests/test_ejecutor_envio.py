@@ -135,21 +135,24 @@ def test_objetivo_solo_espacios(env):
     assert r.trabajo["objetivo"] is None
 
 
-def test_falta_clave_anthropic(tmp_path):
-    cfg = _cfg(tmp_path, clave_anthropic=None)
+@pytest.mark.parametrize("valor", [None, "", "   "])
+def test_falta_clave_anthropic(tmp_path, valor):
+    cfg = _cfg(tmp_path, clave_anthropic=valor)
     ctx = crear_contexto(cfg, reloj=lambda: AHORA, obtener_testigo=TestigoFalso())
     with pytest.raises(ErrorLocal) as e:
         registrar(ctx, URL)
     assert e.value.codigo == "FALTA_CLAVE"
     assert "--solo-transcripcion" in e.value.mensaje
     assert "yti config --clave anthropic" in e.value.mensaje
+    assert "solo_transcripcion=True" not in e.value.mensaje
     r = registrar(ctx, URL, solo_transcripcion=True)
     assert r.duplicado is False
 
 
+@pytest.mark.parametrize("valor", [None, "", "   "])
 @pytest.mark.parametrize("campo,nombre", [("clave_yti", "yt-insights"), ("clave_gemini", "gemini")])
-def test_falta_clave_obligatoria(tmp_path, campo, nombre):
-    ctx = crear_contexto(_cfg(tmp_path, **{campo: None}), reloj=lambda: AHORA)
+def test_falta_clave_obligatoria(tmp_path, campo, nombre, valor):
+    ctx = crear_contexto(_cfg(tmp_path, **{campo: valor}), reloj=lambda: AHORA)
     with pytest.raises(ErrorLocal) as e:
         registrar(ctx, URL, solo_transcripcion=True)
     assert e.value.codigo == "FALTA_CLAVE"
@@ -339,6 +342,7 @@ def test_testigo_invalido_dos_veces_es_error(env):
         (400, _detalle("CLAVE_MAL_FORMADA"), "CLAVE_MAL_FORMADA"),
         (400, _detalle("FUENTE_NO_ADMITIDA"), "FUENTE_NO_ADMITIDA"),
         (400, _detalle("CALLBACK_NO_PERMITIDO"), "CALLBACK_NO_PERMITIDO"),
+        (400, _detalle("FALTA_CLAVE_ANTHROPIC"), "FALTA_CLAVE_ANTHROPIC"),
         (422, {"detail": [{"msg": "campo inválido"}]}, "VALIDACION"),
     ],
 )
@@ -354,6 +358,10 @@ def test_errores_finales(env, estado, cuerpo, codigo):
     assert env.post.call_count == 1
     if codigo in ("FUENTE_NO_ADMITIDA", "CALLBACK_NO_PERMITIDO"):
         assert "reporta" in t["error"]["mensaje"]
+    if codigo == "FALTA_CLAVE_ANTHROPIC":
+        assert "yti config --clave anthropic" in t["error"]["mensaje"]
+        assert "--solo-transcripcion" in t["error"]["mensaje"]
+        assert "solo_transcripcion=True" in t["error"]["mensaje"]
 
 
 def test_contrato_incompatible_es_error(env):
@@ -516,3 +524,25 @@ def test_idioma_explicito_invalido(env):
         registrar(env.ctx, URL, idioma="ES_es")
     assert e.value.codigo == "IDIOMA_INVALIDO"
     assert _json_cola(env.ctx) == []
+
+
+def test_enviar_sin_clave_anthropic_deja_opciones_de_ambos_canales(env):
+    r = registrar(env.ctx, URL)
+    env.ctx.cfg = dataclasses.replace(env.ctx.cfg, clave_anthropic="  ")
+    with pytest.raises(ErrorLocal) as e:
+        enviar(env.ctx, r.trabajo)
+    assert e.value.codigo == "FALTA_CLAVE"
+    t = env.ctx.cola.leer(r.trabajo["id_local"])
+    assert t["estado"] == "por_enviar"
+    for opcion in ("yti config --clave anthropic", "--solo-transcripcion", "solo_transcripcion=True"):
+        assert opcion in t["motivo_sin_envio"]
+    assert env.post.call_count == 0
+
+
+def test_error_final_con_clave_en_blanco_no_estropea_el_mensaje(env):
+    env.ctx.cfg = dataclasses.replace(env.ctx.cfg, clave_anthropic=" ")
+    env.post.respond(400, json=_detalle("FUENTE_NO_ADMITIDA", "fuente no admitida aquí"))
+    r = encolar(env.ctx, URL, solo_transcripcion=True)
+    t = env.ctx.cola.leer(r.trabajo["id_local"])
+    assert "***" not in t["error"]["mensaje"]
+    assert "fuente no admitida aquí" in t["error"]["mensaje"]

@@ -62,7 +62,7 @@ class Contexto:
     ruta_cache_version: Path
 
     def api(self) -> ClienteApi:
-        if not self.cfg.clave_yti:
+        if _falta(self.cfg.clave_yti):
             raise ErrorLocal(
                 "FALTA_CLAVE",
                 "Falta la clave de yt-insights; configúrala con `yti config --clave yt-insights`.",
@@ -107,23 +107,50 @@ def estimacion(duracion_s: int | None) -> str:
 # --- registrar ---
 
 
-def _verificar_claves(cfg: Config, modo: str) -> None:
-    if not cfg.clave_yti:
+def _falta(clave: str | None) -> bool:
+    """Una clave ausente, vacía o solo con espacios cuenta como no configurada."""
+    return not (clave or "").strip()
+
+
+_OPCION_CONFIGURAR = "configúrala con `yti config --clave anthropic`"
+_OPCION_CLI = "pide solo la transcripción con `yti encolar <url> --solo-transcripcion`"
+_OPCION_MCP = (
+    'pide solo la transcripción con `encolar_video(..., solo_transcripcion=True)` y analízala '
+    'en esta sesión con `leer_resultado(video, contenido="transcripcion")`'
+)
+
+
+def mensaje_falta_anthropic(canal: str | None = None) -> str:
+    """Error de análisis sin clave de Anthropic con las opciones del canal ("cli", "mcp" o ambos si es None).
+
+    Nunca se cambia la solicitud a solo transcripción en silencio: el usuario elige.
+    """
+    if canal == "cli":
+        opciones = f"{_OPCION_CONFIGURAR} o {_OPCION_CLI}"
+    elif canal == "mcp":
+        opciones = f"{_OPCION_CONFIGURAR} o {_OPCION_MCP}"
+    else:
+        opciones = (
+            f"{_OPCION_CONFIGURAR}; o pide solo la transcripción "
+            "(`--solo-transcripcion` en la terminal, `solo_transcripcion=True` en el MCP) y analízala "
+            "con tu asistente"
+        )
+    return f"Falta la clave de Anthropic, necesaria para el análisis. Opciones: {opciones}."
+
+
+def _verificar_claves(cfg: Config, modo: str, canal: str | None = None) -> None:
+    if _falta(cfg.clave_yti):
         raise ErrorLocal(
             "FALTA_CLAVE",
             "Falta la clave de yt-insights; configúrala con `yti config --clave yt-insights`.",
         )
-    if not cfg.clave_gemini:
+    if _falta(cfg.clave_gemini):
         raise ErrorLocal(
             "FALTA_CLAVE",
             "Falta la clave de Gemini; configúrala con `yti config --clave gemini`.",
         )
-    if modo == "analisis" and not cfg.clave_anthropic:
-        raise ErrorLocal(
-            "FALTA_CLAVE",
-            "Falta la clave de Anthropic; configúrala con `yti config --clave anthropic` "
-            "o pide solo la transcripción con `--solo-transcripcion`.",
-        )
+    if modo == "analisis" and _falta(cfg.clave_anthropic):
+        raise ErrorLocal("FALTA_CLAVE", mensaje_falta_anthropic(canal))
     proveedores = [("gemini", cfg.clave_gemini)]
     if modo == "analisis":
         proveedores.append(("anthropic", cfg.clave_anthropic))
@@ -150,6 +177,7 @@ def registrar(
     proyecto: str | None = None,
     forzar: bool = False,
     idioma: str | None = None,
+    canal: str = "cli",
 ) -> ResultadoEncolar:
     try:
         video_id = extraer_video_id(url)
@@ -197,7 +225,7 @@ def registrar(
                     estimacion(activo.get("duracion_s")),
                 )
 
-        _verificar_claves(ctx.cfg, modo)
+        _verificar_claves(ctx.cfg, modo, canal)
         trabajo = ctx.cola.crear(
             {
                 "url": url,
@@ -221,7 +249,7 @@ def registrar(
 def _limpio(ctx: Contexto, texto: str) -> str:
     cfg = ctx.cfg
     for clave in (cfg.clave_yti, cfg.clave_gemini, cfg.clave_anthropic):
-        if clave:
+        if not _falta(clave):
             texto = texto.replace(clave, "***")
     return texto
 
@@ -249,10 +277,7 @@ def _error_final(ctx: Contexto, e: ErrorApi) -> dict:
     elif codigo == "FALTA_CLAVE_GEMINI":
         mensaje = "Falta la clave de Gemini; configúrala con `yti config --clave gemini`."
     elif codigo == "FALTA_CLAVE_ANTHROPIC":
-        mensaje = (
-            "Falta la clave de Anthropic; configúrala con `yti config --clave anthropic` "
-            "o usa `--solo-transcripcion`."
-        )
+        mensaje = mensaje_falta_anthropic()
     elif codigo == "CLAVE_MAL_FORMADA":
         mensaje = "Una clave tiene un formato inválido; revisa `yti config`."
     elif codigo in ("FUENTE_NO_ADMITIDA", "CALLBACK_NO_PERMITIDO"):
