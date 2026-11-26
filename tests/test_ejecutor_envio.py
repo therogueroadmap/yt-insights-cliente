@@ -390,7 +390,7 @@ def test_respuesta_perdida(env):
 
 
 def test_version_incompatible_no_envia(env):
-    env.router.get("/openapi.json").respond(json={"info": {"version": "0.3.0"}})
+    env.router.get("/openapi.json").respond(json={"info": {"version": "1.0.0"}})
     r = encolar(env.ctx, URL)
     assert env.post.call_count == 0
     assert env.paginas[:2] == ["/health/vivo", "/openapi.json"]
