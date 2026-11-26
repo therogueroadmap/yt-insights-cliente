@@ -280,7 +280,10 @@ def test_despertar_503(mock, cliente):
         ("0.2.2", True),
         ("0.2.10", True),
         ("0.2.1", False),
-        ("0.3.0", False),
+        ("0.1.9", False),
+        ("0.3.0", True),
+        ("0.4.0", True),
+        ("0.10.1", True),
         ("1.0.0", False),
         ("x", False),
     ],
@@ -319,7 +322,7 @@ def test_contrato_cache_24h(mock, cliente, tmp_path):
 
 
 def test_contrato_incompatible(mock, cliente, tmp_path):
-    mock.get("/openapi.json").respond(200, json={"info": {"version": "0.3.0"}})
+    mock.get("/openapi.json").respond(200, json={"info": {"version": "1.0.0"}})
     cache = tmp_path / "contrato.json"
     assert contrato_compatible(cliente, cache, T0) is False
     assert contrato_compatible(cliente, cache, T0 + timedelta(hours=1)) is False
@@ -388,7 +391,7 @@ def test_contrato_fallo_de_red_no_se_cachea(mock, cliente, tmp_path):
     assert contrato_compatible(cliente, cache, T0) is True
     assert not cache.exists()
     ruta.mock(side_effect=None)
-    ruta.respond(200, json={"info": {"version": "0.3.0"}})
+    ruta.respond(200, json={"info": {"version": "1.0.0"}})
     assert contrato_compatible(cliente, cache, T0 + timedelta(minutes=3)) is False
     assert cache.exists()
 
