@@ -97,7 +97,7 @@ async def test_herramientas_y_esquemas(env):
         "video", "objetivo", "contenido"
     }
     assert set(por_nombre["encolar_video"].input_schema["properties"]) == {
-        "url", "objetivo", "solo_transcripcion", "idioma", "proyecto"
+        "url", "objetivo", "solo_transcripcion", "idioma", "proyecto", "forzar"
     }
     for t in herramientas:
         assert "self" not in t.input_schema.get("properties", {})
@@ -152,12 +152,59 @@ async def test_encolar_retorna_antes_del_post(env):
     assert len(env.post.calls) == 1
 
 
+def _front_a(objetivo):
+    return {"video_id": VID, "objetivo": objetivo, "modelo": "m", "obtenido": "2026-11-18T10:00:00Z"}
+
+
 async def test_encolar_duplicado_mcp(env):
     _sembrar_enviado(env.ctx)
     texto = await env.servicio.encolar_video(URL, OBJETIVO)
-    assert "yti encolar" in texto and "--forzar" in texto
+    assert "ver_cola" in texto
+    assert "yti encolar" not in texto and "forzar" not in texto
     await env.servicio.esperar_fondo()
     assert len(env.post.calls) == 0
+
+
+async def test_encolar_duplicado_en_cola_no_se_salta_con_forzar(env):
+    activo = _sembrar_enviado(env.ctx)
+    texto = await env.servicio.encolar_video(URL, OBJETIVO, forzar=True)
+    assert activo["id_local"] in texto
+    assert len(env.ctx.cola.listar()) == 1
+    await env.servicio.esperar_fondo()
+    assert len(env.post.calls) == 0
+
+
+async def test_encolar_duplicado_biblioteca_sugiere_forzar(env):
+    env.ctx.biblioteca.escribir_analisis(VID, "T", OBJETIVO, _front_a(OBJETIVO), "cuerpo")
+    texto = await env.servicio.encolar_video(URL, OBJETIVO)
+    assert "forzar=true" in texto and "reemplaza" in texto
+    assert "yti encolar" not in texto
+    assert env.ctx.cola.listar() == []
+
+
+async def test_encolar_forzar_repite_analisis_de_biblioteca(env):
+    env.ctx.biblioteca.escribir_analisis(VID, "T", OBJETIVO, _front_a(OBJETIVO), "cuerpo")
+    texto = await env.servicio.encolar_video(URL, OBJETIVO, forzar=True)
+    assert "registrado" in texto
+    assert len(env.ctx.cola.listar()) == 1
+    await env.servicio.esperar_fondo()
+    assert len(env.post.calls) == 1
+
+
+async def test_encolar_avisa_analisis_con_otros_objetivos(env):
+    env.ctx.biblioteca.escribir_analisis(VID, "T", "Costos de nube", _front_a("Costos de nube"), "c")
+    env.ctx.biblioteca.escribir_analisis(VID, "T", None, _front_a(None), "c")
+    texto = await env.servicio.encolar_video(URL, OBJETIVO)
+    assert "registrado" in texto
+    assert "«Costos de nube»" in texto and "general" in texto
+    assert "leer_resultado" in texto
+    await env.servicio.esperar_fondo()
+
+
+async def test_encolar_sin_analisis_previos_no_avisa(env):
+    texto = await env.servicio.encolar_video(URL, OBJETIVO)
+    assert "ya tiene análisis" not in texto
+    await env.servicio.esperar_fondo()
 
 
 async def test_encolar_url_invalida_texto(env):

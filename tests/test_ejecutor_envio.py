@@ -190,6 +190,37 @@ def test_duplicado_forzar(env):
     assert env.post.call_count == 1
 
 
+def test_forzar_cli_salta_trabajo_activo(env):
+    registrar(env.ctx, URL, objetivo="Migrar")
+    r = registrar(env.ctx, URL, objetivo="Migrar", forzar=True)
+    assert r.duplicado is False
+    assert len(env.ctx.cola.listar()) == 2
+
+
+def test_aviso_analisis_previos_cli(env):
+    env.ctx.biblioteca.escribir_analisis(VID, "T", "Costos", _front_a("Costos"), "c")
+    env.ctx.biblioteca.escribir_analisis(VID, "T", "Migrar", _front_a("Migrar"), "c")
+    r = registrar(env.ctx, URL, objetivo="Otro tema")
+    assert r.aviso is not None
+    assert "«Costos»" in r.aviso and "«Migrar»" in r.aviso
+    assert r.aviso in r.mensaje
+    assert "leer_resultado" not in r.aviso
+    r2 = encolar(env.ctx, "https://youtu.be/" + VID, objetivo="Tercero")
+    assert r2.aviso and r2.aviso in r2.mensaje
+
+
+def test_aviso_excluye_el_objetivo_forzado(env):
+    env.ctx.biblioteca.escribir_analisis(VID, "T", "Migrar", _front_a("Migrar"), "c")
+    r = registrar(env.ctx, URL, objetivo=" migrar ", forzar=True)
+    assert r.aviso is None
+
+
+def test_solo_transcripcion_no_avisa_analisis(env):
+    env.ctx.biblioteca.escribir_analisis(VID, "T", "Migrar", _front_a("Migrar"), "c")
+    r = registrar(env.ctx, URL, solo_transcripcion=True)
+    assert r.aviso is None
+
+
 def test_duplicado_transcripcion(env):
     env.ctx.biblioteca.escribir_transcripcion(VID, "T", _front_t(), "texto")
     r = registrar(env.ctx, URL, solo_transcripcion=True)

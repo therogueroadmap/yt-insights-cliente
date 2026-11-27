@@ -74,6 +74,7 @@ class ResultadoEncolar:
     mensaje: str
     trabajo: dict | None
     estimacion: str
+    aviso: str | None = None
 
 
 def crear_contexto(
@@ -164,8 +165,34 @@ def _verificar_claves(cfg: Config, modo: str, canal: str | None = None) -> None:
             )
 
 
-def _aviso_duplicado(texto: str, url: str) -> str:
-    return f"{texto}. Para enviarlo igualmente: yti encolar {url} --forzar"
+def _aviso_duplicado(texto: str, url: str, canal: str, *, en_cola: bool = False) -> str:
+    """Mensaje de duplicado con la salida que admite el canal.
+
+    Desde el MCP, `forzar` no salta un trabajo igual que ya está en la cola: ahí no se sugiere."""
+    if canal != "mcp":
+        return f"{texto}. Para enviarlo igualmente: yti encolar {url} --forzar"
+    if en_cola:
+        return f"{texto}. Consulta el avance con ver_cola."
+    return (
+        f"{texto}. Si el usuario pide repetirlo, vuelve a llamar a encolar_video con forzar=true; "
+        "el resultado nuevo reemplaza al anterior."
+    )
+
+
+def _aviso_analisis_previos(ctx: Contexto, video_id: str, normalizado: str, canal: str) -> str | None:
+    """Lista los objetivos ya analizados del video distintos del pedido; None si no hay."""
+    previos = [
+        o for o in ctx.biblioteca.objetivos_analisis(video_id) if normalizar_objetivo(o) != normalizado
+    ]
+    if not previos:
+        return None
+    lista = ", ".join(f"«{o}»" if o else "general" for o in previos)
+    como = "con leer_resultado" if canal == "mcp" else "en la biblioteca"
+    return (
+        f"El video ya tiene análisis con estos objetivos: {lista}. "
+        f"Si alguno sirve, léelo {como}; el nuevo análisis reutiliza la transcripción, "
+        "así que normalmente solo cuesta el análisis de Claude."
+    )
 
 
 T = TypeVar("T")
@@ -262,10 +289,12 @@ def registrar(
                     actualizar_vistas(ctx)
                 return ResultadoEncolar(
                     True,
-                    _aviso_duplicado(f"Ya está en la biblioteca: {existente}", url) + sufijo,
+                    _aviso_duplicado(f"Ya está en la biblioteca: {existente}", url, canal) + sufijo,
                     None,
                     estimacion(None),
                 )
+        # Desde el MCP, `forzar` solo salta la biblioteca: duplicar un trabajo activo no aporta nada.
+        if not forzar or canal == "mcp":
             activo = ctx.cola.buscar_activo(video_id, normalizado, modo)
             if activo is not None:
                 if proy is not None:
@@ -277,7 +306,9 @@ def registrar(
                     actualizar_vistas(ctx)
                 return ResultadoEncolar(
                     True,
-                    _aviso_duplicado(f"Ya está en la cola con el id {activo['id_local']}", url) + sufijo,
+                    _aviso_duplicado(
+                        f"Ya está en la cola con el id {activo['id_local']}", url, canal, en_cola=True
+                    ) + sufijo,
                     activo,
                     estimacion(activo.get("duracion_s")),
                 )
@@ -301,8 +332,12 @@ def registrar(
         )
         if proy is not None:
             actualizar_vistas(ctx)
+        aviso = (
+            _aviso_analisis_previos(ctx, video_id, normalizado, canal) if modo == "analisis" else None
+        )
+        mensaje = f"Trabajo {trabajo['id_local']} registrado." + sufijo
         return ResultadoEncolar(
-            False, f"Trabajo {trabajo['id_local']} registrado." + sufijo, trabajo, estimacion(None)
+            False, f"{mensaje} {aviso}" if aviso else mensaje, trabajo, estimacion(None), aviso
         )
 
 
@@ -514,8 +549,13 @@ def encolar(ctx: Contexto, url: str, **kw) -> ResultadoEncolar:
     if res.duplicado:
         return res
     trabajo = enviar(ctx, res.trabajo)
+    mensaje = _mensaje_resultado(trabajo)
     return ResultadoEncolar(
-        False, _mensaje_resultado(trabajo), trabajo, estimacion(trabajo.get("duracion_s"))
+        False,
+        f"{mensaje}\n{res.aviso}" if res.aviso else mensaje,
+        trabajo,
+        estimacion(trabajo.get("duracion_s")),
+        res.aviso,
     )
 
 

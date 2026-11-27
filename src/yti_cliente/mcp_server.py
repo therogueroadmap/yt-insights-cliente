@@ -89,6 +89,17 @@ class Servicio:
                 )
             ),
         ] = None,
+        forzar: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Repite un análisis o una transcripción que ya está en la biblioteca con el mismo "
+                    "objetivo; el resultado nuevo reemplaza al anterior y consume cuota de la API. Úsalo "
+                    "solo si el usuario lo pide explícitamente tras el aviso de duplicado. No duplica un "
+                    "trabajo que ya está en la cola."
+                )
+            ),
+        ] = False,
     ) -> str:
         """Encola un video de YouTube para su análisis o su transcripción y retorna de inmediato.
 
@@ -99,7 +110,7 @@ class Servicio:
         try:
             res = await asyncio.to_thread(
                 registrar, self.ctx, url, objetivo=objetivo, solo_transcripcion=solo_transcripcion,
-                idioma=idioma, proyecto=proyecto, canal="mcp",
+                idioma=idioma, proyecto=proyecto, forzar=forzar, canal="mcp",
             )
         except ErrorLocal as e:
             return e.mensaje
@@ -108,10 +119,11 @@ class Servicio:
         tarea = asyncio.create_task(self._enviar_fondo(res.trabajo))
         self._tareas.add(tarea)
         tarea.add_done_callback(self._tareas.discard)
-        return (
+        texto = (
             f"Trabajo {res.trabajo['id_local']} registrado; se envía en segundo plano. "
             f"Tiempo estimado: {res.estimacion}. Consulta el avance con ver_cola."
         )
+        return f"{texto}\n{res.aviso}" if res.aviso else texto
 
     async def _en_proyectos(self, accion, formato) -> str:
         """Corre `accion` con el candado en un hilo; devuelve el texto de `formato(resultado)` y el aviso de vistas."""
