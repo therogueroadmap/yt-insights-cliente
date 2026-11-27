@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [0.2.0] — 2026-11-27
+
 ### Added
 - Proyectos locales: el comando `yti proyecto` (`crear`, `lista`, `ver`, `agregar`, `quitar`, `editar`, `nota`, `borrar`) administra proyectos con videos, objetivo y notas.
 - MCP: herramientas `listar_proyectos`, `leer_proyecto`, `crear_proyecto`, `agregar_a_proyecto` y `anotar_proyecto`, y el parámetro `proyecto` en `encolar_video`.

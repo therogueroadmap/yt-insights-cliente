@@ -2,7 +2,7 @@
 
 Cliente local de yt-insights: terminal `yti` y servidor MCP stdio.
 
-> **Versión:** 0.1.1
+> **Versión:** 0.2.0
 
 Estado: en desarrollo
 
