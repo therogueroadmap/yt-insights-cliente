@@ -5,7 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- Proyectos locales: el comando `yti proyecto` (`crear`, `lista`, `ver`, `agregar`, `quitar`, `editar`, `nota`, `borrar`) administra proyectos con videos, objetivo y notas.
+
 ### Changed
+- `--proyecto` guarda el id del proyecto, lo crea si no existe y usa su objetivo como objetivo por defecto.
+- `proyectos/<slug>.md` pasa a ser una vista generada; los archivos antiguos se migran a `.yti/proyectos/<id>.json` y su original se respalda en `.yti/proyectos/importados/`.
 - Pedir un análisis sin clave de Anthropic falla con `FALTA_CLAVE` y lista las opciones según el canal: en la terminal, configurar la clave o usar `--solo-transcripcion`; en el MCP, configurar la clave o pedir `solo_transcripcion=True` y analizar la transcripción en la sesión con `leer_resultado`. La solicitud nunca se cambia a solo transcripción en silencio.
 
 ### Fixed

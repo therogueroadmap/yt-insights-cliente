@@ -22,11 +22,15 @@ from yti_cliente.ejecutor import (
     ErrorLocal,
     activar,
     crear_contexto,
+    con_proyectos,
     encolar,
     esperar,
     estimacion,
 )
+from yti_cliente.proyectos import SIN_CAMBIO
+from yti_cliente.proyectos_vista import texto_vista
 from yti_cliente.registro import configurar_registro, redactar
+from yti_cliente.youtube import UrlNoAdmitida, resolver_ref_video
 
 _CLAVES_CLI = {"yt-insights": "yt_insights", "gemini": "gemini", "anthropic": "anthropic"}
 _ORIGENES = {"entorno": "entorno", "archivo": "archivo", "defecto": "por defecto", "ausente": "sin configurar"}
@@ -59,6 +63,30 @@ def _parser() -> argparse.ArgumentParser:
 
     li = sub.add_parser("lista", help="lista los videos de la biblioteca")
     li.add_argument("--buscar")
+
+    pr = sub.add_parser("proyecto", help="administra los proyectos locales")
+    acc = pr.add_subparsers(dest="accion", required=True, metavar="acción")
+    a = acc.add_parser("crear", help="crea un proyecto")
+    a.add_argument("nombre")
+    a.add_argument("--objetivo", help="objetivo por defecto de los videos del proyecto")
+    acc.add_parser("lista", help="lista los proyectos")
+    a = acc.add_parser("ver", help="muestra el proyecto")
+    a.add_argument("nombre")
+    a = acc.add_parser("agregar", help="agrega videos al proyecto (lo crea si no existe) sin encolarlos")
+    a.add_argument("nombre")
+    a.add_argument("videos", nargs="+", metavar="video", help="URL o id de video de YouTube")
+    a = acc.add_parser("quitar", help="quita un video del proyecto")
+    a.add_argument("nombre")
+    a.add_argument("video", help="URL o id de video de YouTube")
+    a = acc.add_parser("editar", help="cambia el nombre o el objetivo del proyecto")
+    a.add_argument("nombre")
+    a.add_argument("--nombre", dest="nuevo_nombre", help="nombre nuevo")
+    a.add_argument("--objetivo", help="objetivo nuevo; con una cadena vacía se borra")
+    a = acc.add_parser("nota", help="agrega una nota al proyecto")
+    a.add_argument("nombre")
+    a.add_argument("texto")
+    a = acc.add_parser("borrar", help="borra el proyecto (no toca los videos)")
+    a.add_argument("nombre")
 
     sub.add_parser("mcp", help="arranca el servidor MCP por stdio")
     return p
@@ -172,6 +200,62 @@ def _lista(ctx, args) -> int:
     return 0
 
 
+def _ref_video(texto: str) -> str:
+    try:
+        return resolver_ref_video(texto)
+    except UrlNoAdmitida as e:
+        raise ErrorLocal("URL_NO_ADMITIDA", str(e)) from None
+
+
+def _tabla_proyectos(proyectos) -> str:
+    filas = [("nombre", "objetivo", "videos")]
+    filas += [(p.nombre, p.objetivo or "-", str(len(p.videos))) for p in proyectos]
+    anchos = [max(len(f[i]) for f in filas) for i in range(3)]
+    return "\n".join("  ".join(c.ljust(a) for c, a in zip(f, anchos)).rstrip() for f in filas)
+
+
+def _proyecto(ctx, args) -> int:
+    accion = args.accion
+    if accion == "agregar":
+        ids = [_ref_video(v) for v in args.videos]  # valida todo antes de tocar nada
+    elif accion == "quitar":
+        id_video = _ref_video(args.video)
+
+    def correr(ps) -> str | None:
+        if accion == "crear":
+            p = ps.crear(args.nombre, args.objetivo)
+            return f"Proyecto «{p.nombre}» creado (id {p.id})."
+        if accion == "lista":
+            lista = ps.listar()
+            return _tabla_proyectos(lista) if lista else "No hay proyectos."
+        if accion == "ver":
+            return texto_vista(ps, ps.resolver(args.nombre))
+        if accion == "agregar":
+            p, creado = ps.resolver_o_crear(args.nombre)
+            nuevos = sum(ps.agregar_video(p.id, v) for v in ids)
+            partes = [f"Proyecto «{p.nombre}» creado."] if creado else []
+            partes.append(f"Videos agregados a «{p.nombre}»: {nuevos} de {len(ids)}.")
+            return "\n".join(partes)
+        if accion == "quitar":
+            ps.quitar_video(args.nombre, id_video)
+            return f"Video {id_video} quitado de «{args.nombre}»."
+        if accion == "editar":
+            objetivo = SIN_CAMBIO if args.objetivo is None else args.objetivo
+            p = ps.editar(args.nombre, args.nuevo_nombre, objetivo)
+            return f"Proyecto «{p.nombre}» actualizado."
+        if accion == "nota":
+            p = ps.anotar(args.nombre, args.texto, "cli")
+            return f"Nota agregada a «{p.nombre}»."
+        ps.borrar(args.nombre)
+        return f"Proyecto «{args.nombre}» borrado."
+
+    salida, aviso = con_proyectos(ctx, correr)
+    print(salida)
+    if aviso:
+        print(aviso, file=sys.stderr)
+    return 0
+
+
 def _mcp() -> int:
     importlib.import_module("yti_cliente.mcp_server").ejecutar()
     return 0
@@ -191,6 +275,8 @@ def _ejecutar(args) -> int:
         return _estado(ctx)
     if args.comando == "esperar":
         return _esperar(ctx, args)
+    if args.comando == "proyecto":
+        return _proyecto(ctx, args)
     return _lista(ctx, args)
 
 
