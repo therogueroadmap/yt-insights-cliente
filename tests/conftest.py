@@ -34,3 +34,15 @@ def sin_red(monkeypatch):
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.fixture
+def proyectos(tmp_path):
+    from datetime import datetime, timezone
+
+    from yti_cliente.biblioteca import Biblioteca
+    from yti_cliente.cola import Cola
+    from yti_cliente.proyectos import Proyectos
+
+    ahora = datetime(2026, 11, 26, 15, 0, 0, tzinfo=timezone.utc)
+    return Proyectos(Biblioteca(tmp_path / "bib"), Cola(tmp_path / "bib", reloj=lambda: ahora))
