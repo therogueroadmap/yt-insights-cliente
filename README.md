@@ -4,7 +4,7 @@ Cliente local de yt-insights: terminal `yti` y servidor MCP stdio.
 
 > **Versión:** 0.3.0
 
-Estado: en desarrollo
+Estado: versión de prueba. Los comandos y el formato de la biblioteca pueden cambiar entre versiones, así que actualiza con frecuencia (ver [Actualización](#actualización)) y reporta lo que falle o resulte confuso (ver [Reportar un problema](#reportar-un-problema)).
 
 ## Para qué sirve
 
@@ -14,13 +14,40 @@ Licencia: MIT (consulta `LICENSE`).
 
 ## Instalación
 
-Requiere Python 3.11 o superior y [uv](https://docs.astral.sh/uv/).
+Requiere Python 3.11 o superior y [uv](https://docs.astral.sh/uv/). Si no tienes uv, instálalo y abre una terminal nueva:
+
+```
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# macOS o Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Después instala el cliente:
 
 ```
 uv tool install git+https://github.com/therogueroadmap/yt-insights-cliente
 ```
 
 Si el paquete se publica en PyPI, bastará con `uv tool install yt-insights-cliente`.
+
+## Primeros pasos
+
+Necesitas tres claves: la de yt-insights, la de Gemini y la de Anthropic. La de Gemini es obligatoria en todos los trabajos, incluso con `--solo-transcripcion`. La de Anthropic solo hace falta para el modo análisis.
+
+```
+yti config --clave yt-insights
+yti config --clave gemini
+yti config --clave anthropic
+yti encolar https://www.youtube.com/watch?v=dQw4w9WgXcQ
+yti esperar
+yti lista
+```
+
+`yti esperar` termina cuando el trabajo está listo. Los resultados quedan en la biblioteca (`~/yt-insights` por defecto): abre la carpeta del video y lee `analisis-general.md` y `transcripcion.md`. Para usarlo desde un asistente, sigue la [guía MCP](docs/guia-mcp.md).
+
+La URL de la API y la ruta de la biblioteca ya traen un valor por defecto: no hace falta configurarlas.
 
 ## Configuración: `yti config`
 
@@ -30,7 +57,7 @@ yti config --clave yt-insights      # pide la clave sin eco y la guarda
 yti config --clave gemini
 yti config --clave anthropic        # solo hace falta para el modo análisis
 yti config --biblioteca ~/mi-biblioteca
-yti config --api-url https://yt-insights-api-f8y7.onrender.com
+yti config --api-url https://yt-insights-api-f8y7.onrender.com   # solo si te indican otra URL
 yti config --idioma en              # idioma en que se redacta el análisis (ISO 639-1)
 ```
 
@@ -118,10 +145,45 @@ Los errores salen por stderr en una línea, con código de salida 1.
 - Los `proyectos/*.md` de versiones anteriores se migran a JSON la primera vez que se usa un proyecto; el original queda respaldado en `.yti/proyectos/importados/`.
 - `.yti/` es el estado interno de la cola: no lo edites a mano.
 
+## Límites del servicio
+
+- **Arranque en frío:** el servicio se duerme tras un rato sin uso. La primera petición puede tardar hasta 90 segundos mientras despierta; el cliente espera solo.
+- **Tope diario:** cada clave de yt-insights tiene un tope de trabajos por día. Al alcanzarlo, el trabajo queda guardado en la cola local y se envía solo cuando el tope se renueva (el mensaje indica la hora).
+
+## Errores frecuentes
+
+| Código | Qué pasó | Qué hacer |
+|---|---|---|
+| `CLAVE_YTI_INVALIDA` | El servicio rechazó tu clave de yt-insights. | Revísala con `yti config --clave yt-insights`; si sigue fallando, pide una nueva. |
+| `FALTA_CLAVE_GEMINI` / `GEMINI_AUTH` | Falta la clave de Gemini o Gemini la rechazó. | Revísala con `yti config --clave gemini`. |
+| `FALTA_CLAVE_ANTHROPIC` / `CLAUDE_AUTH` | Falta la clave de Anthropic, es inválida o no tiene saldo. | Revísala con `yti config --clave anthropic`. |
+| `TOPE_DIARIO` | Alcanzaste el tope diario. | Nada: el trabajo se envía solo cuando se renueva. |
+| `CLAVES_NO_DISPONIBLES` | El servicio se reinició y perdió las claves del trabajo. | El cliente lo reenvía una vez solo; si vuelve a fallar, encola el video de nuevo. |
+| `SERVICIO_NO_DISPONIBLE` | No se pudo conectar con el servicio. | El trabajo queda guardado y se reintenta en la próxima activación (`yti estado`). |
+| `CONTRATO_INCOMPATIBLE` | Tu versión del cliente no entiende la respuesta del servicio. | Actualiza el cliente (ver [Actualización](#actualización)). |
+
+Otros errores del servicio (por ejemplo, cuota de Gemini agotada) se muestran con su código y un mensaje en la tabla de `yti estado`.
+
+## Reportar un problema
+
+Envía a quien te dio acceso:
+
+- Qué comando ejecutaste (o qué le pediste al asistente) y qué esperabas.
+- El id local del trabajo y, si lo tiene, el id remoto (salen en `yti estado`).
+- El archivo `yti.log` (ver [la tabla de rutas](#dónde-quedan-configtoml-y-ytilog)). El log no contiene claves, pero revísalo antes de enviarlo.
+
+No envíes nunca tus claves ni el archivo `config.toml`.
+
 ## Actualización
 
 ```
 uv tool upgrade yt-insights-cliente
+```
+
+Esto actualiza la terminal `yti`. El servidor MCP corre con `uvx` y puede seguir usando la versión anterior desde la caché. Para actualizarlo, ejecuta una vez el siguiente comando y reinicia el host por completo:
+
+```
+uvx --refresh --from git+https://github.com/therogueroadmap/yt-insights-cliente yti --help
 ```
 
 yt-dlp envejece rápido: cuando YouTube cambie algo, la descarga del testigo puede fallar hasta que actualices el paquete.
