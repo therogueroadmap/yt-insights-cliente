@@ -143,3 +143,9 @@ def test_enlace_con_corchetes_en_el_titulo_se_importa_como_video(proyectos):
     assert migrar_antiguos(proyectos) == []
     p = proyectos.resolver("Mix")
     assert [v["video_id"] for v in p.videos] == ["dQw4w9WgXcQ"] and p.notas == []
+
+
+def test_encabezado_con_tabulador_se_importa_con_espacio(proyectos):
+    _viejo(proyectos, "tab", "# Uno\tDos\n\nnota\n")
+    assert migrar_antiguos(proyectos) == []
+    assert [p.nombre for p in proyectos.listar()] == ["Uno Dos"]

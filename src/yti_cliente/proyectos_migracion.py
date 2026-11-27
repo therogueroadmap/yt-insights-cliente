@@ -10,7 +10,7 @@ from pathlib import Path
 from yti_cliente.biblioteca import leer_front_matter
 from yti_cliente.errores import ErrorLocal
 from yti_cliente.limites import MAX_NOMBRE_PROYECTO, MAX_NOTA
-from yti_cliente.proyectos import AVISO_VISTA, Proyectos, slug_proyecto
+from yti_cliente.proyectos import AVISO_VISTA, Proyectos, sin_control, slug_proyecto
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def _partir(lineas: list[str]) -> list[str]:
 
 
 def _nombres(base: str):
-    base = base.strip()[:MAX_NOMBRE_PROYECTO].strip()
+    base = sin_control(base).strip()[:MAX_NOMBRE_PROYECTO].strip()
     yield base
     for n in range(1, _MAX_REINTENTOS_NOMBRE + 1):
         sufijo = " (importado)" if n == 1 else f" (importado {n})"

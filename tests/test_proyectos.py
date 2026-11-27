@@ -44,6 +44,17 @@ def test_nombre_invalido(proyectos, nombre):
     with pytest.raises(ErrorLocal) as e: proyectos.crear(nombre)
     assert e.value.codigo == "PROYECTO_NOMBRE_INVALIDO"
 
+@pytest.mark.parametrize("nombre", ["a\nb", "a\r\nb", "a\tb", "a\u2028b", "a\x00b"])
+def test_nombre_con_caracteres_de_control_es_invalido(proyectos, nombre):
+    with pytest.raises(ErrorLocal) as e: proyectos.crear(nombre)
+    assert e.value.codigo == "PROYECTO_NOMBRE_INVALIDO" and proyectos.listar() == []
+
+def test_editar_a_nombre_con_salto_de_linea_es_invalido(proyectos):
+    proyectos.crear("A")
+    with pytest.raises(ErrorLocal) as e: proyectos.editar("A", nombre="A\nB")
+    assert e.value.codigo == "PROYECTO_NOMBRE_INVALIDO"
+    assert proyectos.resolver("A").nombre == "A"
+
 def test_nombre_de_100_caracteres_vale(proyectos):
     assert proyectos.crear("x" * 100).nombre == "x" * 100
 

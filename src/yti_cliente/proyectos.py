@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import secrets
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,6 +31,11 @@ _ORIGENES = {"cli", "mcp", "importado"}
 
 def es_id_proyecto(ref: str) -> bool:
     return _RE_ID.fullmatch(ref) is not None
+
+
+def sin_control(texto: str) -> str:
+    """Reemplaza por espacios los caracteres de control y los separadores de línea."""
+    return "".join(" " if unicodedata.category(c) in ("Cc", "Zl", "Zp") else c for c in texto)
 
 
 def slug_proyecto(nombre: str) -> str:
@@ -169,6 +175,9 @@ class Proyectos:
         if not nombre or len(nombre) > MAX_NOMBRE_PROYECTO:
             raise ErrorLocal("PROYECTO_NOMBRE_INVALIDO",
                              f"el nombre debe tener entre 1 y {MAX_NOMBRE_PROYECTO} caracteres.")
+        if sin_control(nombre) != nombre:
+            raise ErrorLocal("PROYECTO_NOMBRE_INVALIDO",
+                             "el nombre no puede tener saltos de línea ni caracteres de control.")
         if es_id_proyecto(nombre):
             raise ErrorLocal("PROYECTO_NOMBRE_INVALIDO",
                              "el nombre no puede tener la forma de un id de proyecto (p-xxxxxxxx).")
