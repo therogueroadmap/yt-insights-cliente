@@ -7,6 +7,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Added
 - MCP: el servidor se anuncia con el título «YouTube Insights», su versión y el icono del panel, para los clientes MCP que muestran iconos. Claude Desktop no lo muestra en servidores locales.
+- MCP: parámetro `forzar` en `encolar_video` para repetir un análisis o una transcripción que ya está en la biblioteca. Desde el MCP no duplica un trabajo que ya está en la cola.
+- Al encolar un análisis, la respuesta (MCP y terminal) avisa si el video ya tiene análisis con otros objetivos y los lista.
+
+### Changed
+- MCP: el aviso de duplicado ya no sugiere el comando `yti encolar --forzar`; propone `forzar=true` si el duplicado está en la biblioteca y `ver_cola` si está en la cola.
 
 ---
 

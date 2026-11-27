@@ -166,6 +166,13 @@ class Biblioteca:
             return []
         return [(p, _leer(p)[0]) for p in sorted(carpeta.glob("analisis-*.md"))]
 
+    def objetivos_analisis(self, video_id: str) -> list[str | None]:
+        """Objetivos de los análisis guardados del video (None = análisis general)."""
+        carpeta = self.buscar_carpeta(video_id)
+        if carpeta is None:
+            return []
+        return [fm.get("objetivo") or None for _, fm in self._analisis(carpeta)]
+
     def buscar_analisis(self, video_id: str, objetivo: str | None) -> Path | None:
         carpeta = self.buscar_carpeta(video_id)
         if carpeta is None:
