@@ -1,4 +1,4 @@
-"""Servidor MCP (stdio): cuatro herramientas sobre la cola y la biblioteca locales (§8.4)."""
+"""Servidor MCP (stdio): herramientas sobre la cola, la biblioteca y los proyectos locales (§8.4)."""
 
 import asyncio
 import contextlib
@@ -15,14 +15,16 @@ from yti_cliente.ejecutor import (
     Contexto,
     ErrorLocal,
     activar,
+    con_proyectos,
     crear_contexto,
     enviar,
     estimacion,
     hay_activos,
     registrar,
 )
+from yti_cliente.proyectos_vista import texto_leer_proyecto
 from yti_cliente.registro import configurar_registro, redactar
-from yti_cliente.youtube import UrlNoAdmitida, extraer_video_id
+from yti_cliente.youtube import UrlNoAdmitida, extraer_video_id, resolver_ref_video
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +35,11 @@ _ESTADOS_ACTIVOS = ("por_enviar", "enviando", "enviado", "retenido")
 _INSTRUCCIONES = (
     "Encola videos de YouTube para analizarlos (encolar_video), consulta el avance de la cola "
     "(ver_cola), lista la biblioteca local (listar_biblioteca) y lee un resultado "
-    "(leer_resultado)."
+    "(leer_resultado). Para investigar un tema con varios videos: crea el proyecto con su objetivo "
+    "(crear_proyecto), encola cada video con `proyecto` (encolar_video), lee el proyecto con "
+    "leer_proyecto y cada análisis con leer_resultado para sintetizar, y guarda la conclusión con "
+    "anotar_proyecto. También puedes listar_proyectos y sumar un video ya analizado con "
+    "agregar_a_proyecto. Quitar, editar y borrar proyectos no se hace desde aquí."
 )
 
 
@@ -71,6 +77,15 @@ class Servicio:
                 )
             ),
         ] = None,
+        proyecto: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Nombre del proyecto al que se suma el video. Se resuelve por nombre y se crea "
+                    "si no existe; su objetivo es el objetivo por defecto del video."
+                )
+            ),
+        ] = None,
     ) -> str:
         """Encola un video de YouTube para su análisis o su transcripción y retorna de inmediato.
 
@@ -81,7 +96,7 @@ class Servicio:
         try:
             res = await asyncio.to_thread(
                 registrar, self.ctx, url, objetivo=objetivo, solo_transcripcion=solo_transcripcion,
-                idioma=idioma,
+                idioma=idioma, proyecto=proyecto, canal="mcp",
             )
         except ErrorLocal as e:
             return e.mensaje
@@ -93,6 +108,66 @@ class Servicio:
         return (
             f"Trabajo {res.trabajo['id_local']} registrado; se envía en segundo plano. "
             f"Tiempo estimado: {res.estimacion}. Consulta el avance con ver_cola."
+        )
+
+    async def _en_proyectos(self, accion, formato) -> str:
+        """Corre `accion` con el candado en un hilo; devuelve el texto de `formato(resultado)` y el aviso de vistas."""
+        try:
+            resultado, aviso = await asyncio.to_thread(con_proyectos, self.ctx, accion)
+        except ErrorLocal as e:
+            return e.mensaje
+        texto = formato(resultado)
+        return f"{texto}\n{aviso}" if aviso else texto
+
+    async def listar_proyectos(self) -> str:
+        """Lista los proyectos locales con su objetivo y la cantidad de videos."""
+        def formato(proyectos) -> str:
+            if not proyectos:
+                return "No hay proyectos."
+            lineas = []
+            for p in proyectos:
+                n = len(p.videos)
+                lineas.append(
+                    f"- {p.nombre}: {p.objetivo or 'sin objetivo'} ({n} {'video' if n == 1 else 'videos'})"
+                )
+            return "\n".join(lineas)
+
+        return await self._en_proyectos(lambda ps: ps.listar(), formato)
+
+    async def leer_proyecto(self, proyecto: str) -> str:
+        """Devuelve el objetivo, los videos y las notas de un proyecto (por nombre)."""
+        return await self._en_proyectos(
+            lambda ps: texto_leer_proyecto(ps, ps.resolver(proyecto)), lambda t: t
+        )
+
+    async def crear_proyecto(self, nombre: str, objetivo: str | None = None) -> str:
+        """Crea un proyecto con un nombre y, si quieres, un objetivo de investigación."""
+        return await self._en_proyectos(
+            lambda ps: ps.crear(nombre, objetivo), lambda p: f"Proyecto «{p.nombre}» creado."
+        )
+
+    async def agregar_a_proyecto(self, proyecto: str, video: str) -> str:
+        """Suma un video (URL o video_id) a un proyecto; si el proyecto no existe, lo crea."""
+        try:
+            video_id = resolver_ref_video(video)
+        except UrlNoAdmitida as e:
+            return str(e)
+
+        def accion(ps) -> str:
+            p, creado = ps.resolver_o_crear(proyecto)
+            nuevo = ps.agregar_video(p.nombre, video_id)
+            prefijo = f"Proyecto «{p.nombre}» creado. " if creado else ""
+            return prefijo + (
+                f"Video {video_id} agregado a «{p.nombre}»." if nuevo
+                else f"El video {video_id} ya estaba en «{p.nombre}»."
+            )
+
+        return await self._en_proyectos(accion, lambda t: t)
+
+    async def anotar_proyecto(self, proyecto: str, texto: str) -> str:
+        """Guarda una nota (por ejemplo, la conclusión de una síntesis) en un proyecto."""
+        return await self._en_proyectos(
+            lambda ps: ps.anotar(proyecto, texto, "mcp"), lambda p: f"Nota guardada en «{p.nombre}»."
         )
 
     async def ver_cola(self) -> str:
@@ -207,6 +282,11 @@ def construir_servidor(servicio: Servicio) -> MCPServer:
     servidor.add_tool(servicio.ver_cola, name="ver_cola")
     servidor.add_tool(servicio.listar_biblioteca, name="listar_biblioteca")
     servidor.add_tool(servicio.leer_resultado, name="leer_resultado")
+    servidor.add_tool(servicio.listar_proyectos, name="listar_proyectos")
+    servidor.add_tool(servicio.leer_proyecto, name="leer_proyecto")
+    servidor.add_tool(servicio.crear_proyecto, name="crear_proyecto")
+    servidor.add_tool(servicio.agregar_a_proyecto, name="agregar_a_proyecto")
+    servidor.add_tool(servicio.anotar_proyecto, name="anotar_proyecto")
     return servidor
 
 

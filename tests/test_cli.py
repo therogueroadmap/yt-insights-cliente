@@ -223,3 +223,67 @@ def test_config_muestra_idioma_con_origen(monkeypatch, capsys):
 def test_encolar_no_tiene_flag_idioma():
     with pytest.raises(SystemExit):
         cli.main(["encolar", URL, "--idioma", "en"])
+
+
+def test_proyecto_crear_y_lista(env, capsys):
+    assert cli.main(["proyecto", "crear", "Agentes de IA", "--objetivo", "Comparar enfoques"]) == 0
+    assert "Proyecto «Agentes de IA» creado (id p-" in capsys.readouterr().out
+    assert cli.main(["proyecto", "lista"]) == 0
+    salida = capsys.readouterr().out
+    assert "Agentes de IA" in salida and "Comparar enfoques" in salida
+    assert (env.cfg.biblioteca / "proyectos" / "agentes-de-ia.md").is_file()
+
+
+def test_proyecto_lista_vacia(env, capsys):
+    cli.main(["proyecto", "lista"])
+    assert "No hay proyectos." in capsys.readouterr().out
+
+
+def test_proyecto_agregar_crea_y_acepta_url_e_id(env, capsys):
+    assert cli.main(["proyecto", "agregar", "P", URL, "a-b_c123456"]) == 0
+    assert "Proyecto «P» creado." in capsys.readouterr().out
+    assert [v["video_id"] for v in env.ctx.proyectos.resolver("P").videos] == [VID, "a-b_c123456"]
+    assert env.post.call_count == 0  # solo enlaza, no encola
+
+
+def test_proyecto_agregar_lote_con_referencia_invalida_no_agrega_nada(env, capsys):
+    assert cli.main(["proyecto", "agregar", "P", URL, "no-valido"]) == 1
+    assert "URL_NO_ADMITIDA" in capsys.readouterr().err
+    assert env.ctx.proyectos.listar() == []  # tampoco crea el proyecto
+
+
+def test_proyecto_quitar(env, capsys):
+    cli.main(["proyecto", "agregar", "P", URL])
+    assert cli.main(["proyecto", "quitar", "P", URL]) == 0
+    assert env.ctx.proyectos.resolver("P").videos == []
+    assert cli.main(["proyecto", "quitar", "P", URL]) == 1
+    assert "VIDEO_NO_EN_PROYECTO" in capsys.readouterr().err
+
+
+def test_proyecto_editar_renombra_y_borra_objetivo(env):
+    cli.main(["proyecto", "crear", "Viejo", "--objetivo", "obj"])
+    cli.main(["proyecto", "editar", "Viejo", "--nombre", "Nuevo", "--objetivo", ""])
+    p = env.ctx.proyectos.resolver("Nuevo")
+    assert p.objetivo is None
+    assert not (env.cfg.biblioteca / "proyectos" / "viejo.md").exists()
+    assert (env.cfg.biblioteca / "proyectos" / "nuevo.md").is_file()
+
+
+def test_proyecto_nota_ver_y_borrar(env, capsys):
+    cli.main(["proyecto", "crear", "P"])
+    cli.main(["proyecto", "nota", "P", "una conclusión"])
+    assert env.ctx.proyectos.resolver("P").notas[0]["origen"] == "cli"
+    cli.main(["proyecto", "ver", "P"])
+    salida = capsys.readouterr().out
+    assert "# P" in salida and "una conclusión" in salida
+    assert cli.main(["proyecto", "borrar", "P"]) == 0 and env.ctx.proyectos.listar() == []
+
+
+def test_proyecto_inexistente_da_error(env, capsys):
+    assert cli.main(["proyecto", "ver", "nada"]) == 1
+    assert "PROYECTO_NO_EXISTE" in capsys.readouterr().err
+
+
+def test_encolar_con_proyecto_resuelve_y_enlaza(env, capsys):
+    assert cli.main(["encolar", URL, "--proyecto", "P"]) == 0
+    assert [v["video_id"] for v in env.ctx.proyectos.resolver("P").videos] == [VID]

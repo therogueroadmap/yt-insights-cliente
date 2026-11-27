@@ -193,25 +193,6 @@ class Biblioteca:
         escribir_atomico(ruta, front_matter(front) + "\n" + cuerpo)
         return ruta
 
-    # --- proyectos ---
-
-    def agregar_a_proyecto(self, nombre: str, video_id: str) -> Path:
-        ruta = self.raiz / "proyectos" / f"{slug(nombre, 50) or 'proyecto'}.md"
-        carpeta = self.buscar_carpeta(video_id) or self.carpeta_video(video_id, None)
-        trans = carpeta / "transcripcion.md"
-        titulo = (_leer(trans)[0].get("titulo") if trans.is_file() else None) or video_id
-        enlace = f"../videos/{carpeta.name}/"
-        vineta = f"- [{titulo}]({enlace})"
-        actual = ruta.read_text(encoding="utf-8") if ruta.is_file() else f"# {nombre}\n"
-        if f"]({enlace})" in actual:
-            if not ruta.is_file():
-                escribir_atomico(ruta, actual)
-            return ruta
-        if not actual.endswith("\n"):
-            actual += "\n"
-        escribir_atomico(ruta, actual + "\n" * (actual.count("\n") == 1) + vineta + "\n")
-        return ruta
-
     # --- listado e índice ---
 
     def _entradas(self) -> list[tuple[str, EntradaVideo]]:

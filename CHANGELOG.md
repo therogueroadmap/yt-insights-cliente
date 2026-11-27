@@ -7,6 +7,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [0.2.0] — 2026-11-27
+
+### Added
+- Proyectos locales: el comando `yti proyecto` (`crear`, `lista`, `ver`, `agregar`, `quitar`, `editar`, `nota`, `borrar`) administra proyectos con videos, objetivo y notas.
+- MCP: herramientas `listar_proyectos`, `leer_proyecto`, `crear_proyecto`, `agregar_a_proyecto` y `anotar_proyecto`, y el parámetro `proyecto` en `encolar_video`.
+
+### Changed
+- `--proyecto` guarda el id del proyecto, lo crea si no existe y usa su objetivo como objetivo por defecto.
+- `proyectos/<slug>.md` pasa a ser una vista generada; los archivos antiguos se migran a `.yti/proyectos/<id>.json` y su original se respalda en `.yti/proyectos/importados/`.
+- Pedir un análisis sin clave de Anthropic falla con `FALTA_CLAVE` y lista las opciones según el canal: en la terminal, configurar la clave o usar `--solo-transcripcion`; en el MCP, configurar la clave o pedir `solo_transcripcion=True` y analizar la transcripción en la sesión con `leer_resultado`. La solicitud nunca se cambia a solo transcripción en silencio.
+
+### Fixed
+- Una clave vacía o con solo espacios cuenta como no configurada (antes daba `CLAVE_MAL_FORMADA`).
+- Una clave en blanco ya no convierte en `***` los espacios de los mensajes de error al ocultar las claves.
+
+---
+
 ## [0.1.1] — 2026-11-26
 
 ### Fixed

@@ -135,21 +135,24 @@ def test_objetivo_solo_espacios(env):
     assert r.trabajo["objetivo"] is None
 
 
-def test_falta_clave_anthropic(tmp_path):
-    cfg = _cfg(tmp_path, clave_anthropic=None)
+@pytest.mark.parametrize("valor", [None, "", "   "])
+def test_falta_clave_anthropic(tmp_path, valor):
+    cfg = _cfg(tmp_path, clave_anthropic=valor)
     ctx = crear_contexto(cfg, reloj=lambda: AHORA, obtener_testigo=TestigoFalso())
     with pytest.raises(ErrorLocal) as e:
         registrar(ctx, URL)
     assert e.value.codigo == "FALTA_CLAVE"
     assert "--solo-transcripcion" in e.value.mensaje
     assert "yti config --clave anthropic" in e.value.mensaje
+    assert "solo_transcripcion=True" not in e.value.mensaje
     r = registrar(ctx, URL, solo_transcripcion=True)
     assert r.duplicado is False
 
 
+@pytest.mark.parametrize("valor", [None, "", "   "])
 @pytest.mark.parametrize("campo,nombre", [("clave_yti", "yt-insights"), ("clave_gemini", "gemini")])
-def test_falta_clave_obligatoria(tmp_path, campo, nombre):
-    ctx = crear_contexto(_cfg(tmp_path, **{campo: None}), reloj=lambda: AHORA)
+def test_falta_clave_obligatoria(tmp_path, campo, nombre, valor):
+    ctx = crear_contexto(_cfg(tmp_path, **{campo: valor}), reloj=lambda: AHORA)
     with pytest.raises(ErrorLocal) as e:
         registrar(ctx, URL, solo_transcripcion=True)
     assert e.value.codigo == "FALTA_CLAVE"
@@ -213,17 +216,86 @@ def test_duplicado_con_proyecto_en_biblioteca(env):
     env.ctx.biblioteca.escribir_transcripcion(VID, "T", _front_t(), "texto")
     env.ctx.biblioteca.escribir_analisis(VID, "T", None, _front_a(None), "cuerpo")
     r = registrar(env.ctx, URL, proyecto="x")
-    assert r.duplicado is True
-    texto = (env.cfg.biblioteca / "proyectos" / "x.md").read_text(encoding="utf-8")
-    assert "../videos/" in texto
+    assert r.duplicado is True and r.mensaje.endswith("Proyecto «x» creado.")
+    assert [v["video_id"] for v in env.ctx.proyectos.resolver("x").videos] == [VID]
+    assert "../videos/" in (env.cfg.biblioteca / "proyectos" / "x.md").read_text(encoding="utf-8")
 
 
 def test_duplicado_con_proyecto_en_cola(env):
     primero = registrar(env.ctx, URL)
-    assert primero.trabajo["proyecto"] is None
     r = registrar(env.ctx, URL, proyecto="x")
-    assert r.duplicado is True
-    assert env.ctx.cola.leer(primero.trabajo["id_local"])["proyecto"] == "x"
+    p = env.ctx.proyectos.resolver("x")
+    assert r.duplicado is True and env.ctx.cola.leer(primero.trabajo["id_local"])["proyecto"] == p.id
+    assert [v["video_id"] for v in p.videos] == [VID]
+
+
+def test_duplicado_en_cola_con_otro_proyecto_enlaza_al_segundo(env):
+    registrar(env.ctx, URL, proyecto="A")
+    registrar(env.ctx, URL, proyecto="B")
+    assert [v["video_id"] for v in env.ctx.proyectos.resolver("B").videos] == [VID]
+    assert env.ctx.cola.listar()[0]["proyecto"] == env.ctx.proyectos.resolver("A").id
+
+
+def test_trabajo_nuevo_guarda_id_y_enlaza(env):
+    r = registrar(env.ctx, URL, proyecto="Mi proyecto")
+    p = env.ctx.proyectos.resolver("Mi proyecto")
+    assert r.trabajo["proyecto"] == p.id and [v["video_id"] for v in p.videos] == [VID]
+
+
+def test_objetivo_por_defecto_del_proyecto(env):
+    env.ctx.proyectos.crear("P", "Comparar enfoques")
+    r = registrar(env.ctx, URL, proyecto="P")
+    assert (r.trabajo["objetivo"], r.trabajo["objetivo_normalizado"]) == ("Comparar enfoques", "comparar enfoques")
+
+
+def test_objetivo_explicito_gana_y_solo_transcripcion_no_aplica(env):
+    env.ctx.proyectos.crear("P", "Comparar enfoques")
+    assert registrar(env.ctx, URL, proyecto="P", objetivo="Otro").trabajo["objetivo"] == "Otro"
+    assert registrar(env.ctx, URL, proyecto="P", solo_transcripcion=True, forzar=True).trabajo["objetivo"] is None
+
+
+def test_objetivo_del_proyecto_cuenta_para_duplicado_en_biblioteca(env):
+    env.ctx.proyectos.crear("P", "Comparar enfoques")
+    env.ctx.biblioteca.escribir_transcripcion(VID, "T", _front_t(), "texto")
+    env.ctx.biblioteca.escribir_analisis(VID, "T", "Comparar enfoques", _front_a("Comparar enfoques"), "cuerpo")
+    r = registrar(env.ctx, URL, proyecto="P")
+    assert r.duplicado is True and env.ctx.cola.listar() == []
+
+
+def test_proyecto_con_forma_de_id_inexistente_falla_sin_crear(env):
+    with pytest.raises(ErrorLocal) as e:
+        registrar(env.ctx, URL, proyecto="p-00000000")
+    assert e.value.codigo == "PROYECTO_NO_EXISTE" and env.ctx.cola.listar() == []
+
+
+def test_falta_clave_con_proyecto_no_deja_video_enlazado(tmp_path):
+    ctx = crear_contexto(_cfg(tmp_path, clave_anthropic=None), reloj=lambda: AHORA, obtener_testigo=TestigoFalso())
+    with pytest.raises(ErrorLocal) as e:
+        registrar(ctx, URL, proyecto="P")
+    assert e.value.codigo == "FALTA_CLAVE" and ctx.proyectos.resolver("P").videos == []
+    assert (ctx.biblioteca.raiz / "proyectos" / "p.md").is_file()
+
+
+def test_registrar_migra_md_antiguo_antes_de_resolver(env):
+    d = env.cfg.biblioteca / "videos" / f"{VID}-algo"
+    d.mkdir(parents=True)
+    (d / "transcripcion.md").write_text(f"---\nvideo_id: {VID}\n---\n\ntexto\n", encoding="utf-8")
+    vista = env.cfg.biblioteca / "proyectos"
+    vista.mkdir(parents=True)
+    (vista / "viejo.md").write_text(f"# Viejo\n\n- [Algo](../videos/{VID}-algo/)\n", encoding="utf-8")
+    r = registrar(env.ctx, URL, proyecto="viejo")
+    assert not r.mensaje.endswith("creado.")
+    assert [p.nombre for p in env.ctx.proyectos.listar()] == ["Viejo"]
+    assert [v["video_id"] for v in env.ctx.proyectos.resolver("viejo").videos] == [VID]
+
+
+def test_registrar_sin_proyecto_regenera_vistas_tras_migrar(env):
+    vista = env.cfg.biblioteca / "proyectos"
+    vista.mkdir(parents=True)
+    (vista / "viejo.md").write_text("# Viejo\n\nnota a mano\n", encoding="utf-8")
+    registrar(env.ctx, URL)
+    assert [p.nombre for p in env.ctx.proyectos.listar()] == ["Viejo"]
+    assert "nota a mano" in (vista / "viejo.md").read_text(encoding="utf-8")
 
 
 # --- enviar ---
@@ -339,6 +411,7 @@ def test_testigo_invalido_dos_veces_es_error(env):
         (400, _detalle("CLAVE_MAL_FORMADA"), "CLAVE_MAL_FORMADA"),
         (400, _detalle("FUENTE_NO_ADMITIDA"), "FUENTE_NO_ADMITIDA"),
         (400, _detalle("CALLBACK_NO_PERMITIDO"), "CALLBACK_NO_PERMITIDO"),
+        (400, _detalle("FALTA_CLAVE_ANTHROPIC"), "FALTA_CLAVE_ANTHROPIC"),
         (422, {"detail": [{"msg": "campo inválido"}]}, "VALIDACION"),
     ],
 )
@@ -354,6 +427,10 @@ def test_errores_finales(env, estado, cuerpo, codigo):
     assert env.post.call_count == 1
     if codigo in ("FUENTE_NO_ADMITIDA", "CALLBACK_NO_PERMITIDO"):
         assert "reporta" in t["error"]["mensaje"]
+    if codigo == "FALTA_CLAVE_ANTHROPIC":
+        assert "yti config --clave anthropic" in t["error"]["mensaje"]
+        assert "--solo-transcripcion" in t["error"]["mensaje"]
+        assert "solo_transcripcion=True" in t["error"]["mensaje"]
 
 
 def test_contrato_incompatible_es_error(env):
@@ -516,3 +593,25 @@ def test_idioma_explicito_invalido(env):
         registrar(env.ctx, URL, idioma="ES_es")
     assert e.value.codigo == "IDIOMA_INVALIDO"
     assert _json_cola(env.ctx) == []
+
+
+def test_enviar_sin_clave_anthropic_deja_opciones_de_ambos_canales(env):
+    r = registrar(env.ctx, URL)
+    env.ctx.cfg = dataclasses.replace(env.ctx.cfg, clave_anthropic="  ")
+    with pytest.raises(ErrorLocal) as e:
+        enviar(env.ctx, r.trabajo)
+    assert e.value.codigo == "FALTA_CLAVE"
+    t = env.ctx.cola.leer(r.trabajo["id_local"])
+    assert t["estado"] == "por_enviar"
+    for opcion in ("yti config --clave anthropic", "--solo-transcripcion", "solo_transcripcion=True"):
+        assert opcion in t["motivo_sin_envio"]
+    assert env.post.call_count == 0
+
+
+def test_error_final_con_clave_en_blanco_no_estropea_el_mensaje(env):
+    env.ctx.cfg = dataclasses.replace(env.ctx.cfg, clave_anthropic=" ")
+    env.post.respond(400, json=_detalle("FUENTE_NO_ADMITIDA", "fuente no admitida aquí"))
+    r = encolar(env.ctx, URL, solo_transcripcion=True)
+    t = env.ctx.cola.leer(r.trabajo["id_local"])
+    assert "***" not in t["error"]["mensaje"]
+    assert "fuente no admitida aquí" in t["error"]["mensaje"]

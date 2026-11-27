@@ -2,7 +2,7 @@
 
 Cliente local de yt-insights: terminal `yti` y servidor MCP stdio.
 
-> **Versión:** 0.1.1
+> **Versión:** 0.2.0
 
 Estado: en desarrollo
 
@@ -50,10 +50,23 @@ Las rutas las decide `platformdirs`:
 
 ## Subcomandos
 
-- `yti encolar <url> [--objetivo T] [--solo-transcripcion] [--sin-testigo] [--proyecto X] [--forzar]`: registra el trabajo y lo envía. Imprime el id local, el id remoto, el estado y la estimación. Si el video ya está en la cola o en la biblioteca, avisa y no envía nada, salvo que uses `--forzar`.
+- `yti encolar <url> [--objetivo T] [--solo-transcripcion] [--sin-testigo] [--proyecto X] [--forzar]`: registra el trabajo y lo envía. Imprime el id local, el id remoto, el estado y la estimación. Con `--proyecto X` enlaza el video al proyecto (lo crea si no existe) y, si no pasas `--objetivo`, usa el objetivo del proyecto como objetivo por defecto. Si el video ya está en la cola o en la biblioteca, avisa y no envía nada, salvo que uses `--forzar`.
 
   ```
   yti encolar https://www.youtube.com/watch?v=dQw4w9WgXcQ --objetivo "Migrar a microservicios"
+  ```
+
+- `yti proyecto <acción>`: administra los proyectos locales (un proyecto agrupa videos, un objetivo y notas). Las acciones aceptan el nombre o el id (`p-...`) del proyecto, y los videos como URL o id de 11 caracteres:
+
+  ```
+  yti proyecto crear NOMBRE [--objetivo T]
+  yti proyecto lista
+  yti proyecto ver NOMBRE
+  yti proyecto agregar NOMBRE VIDEO...   # crea el proyecto si no existe; solo enlaza, no encola
+  yti proyecto quitar NOMBRE VIDEO
+  yti proyecto editar NOMBRE [--nombre N] [--objetivo T]   # --objetivo "" borra el objetivo
+  yti proyecto nota NOMBRE TEXTO
+  yti proyecto borrar NOMBRE             # no toca los videos
   ```
 
 - `yti estado`: hace una activación (envía lo pendiente, sondea lo enviado y baja lo completado) y muestra la tabla de la cola.
@@ -93,6 +106,7 @@ Los errores salen por stderr en una línea, con código de salida 1.
 └── .yti/
     ├── version
     ├── candado
+    ├── proyectos/<id>.json
     ├── trabajos/<id_local>.json
     └── testigos/<id_local>.vtt
 ```
@@ -100,7 +114,8 @@ Los errores salen por stderr en una línea, con código de salida 1.
 - La carpeta de cada video es `<video_id>-<titulo-corto>`; el cliente la busca por el prefijo `<video_id>-`.
 - `transcripcion.md` y `analisis-<slug>.md` llevan un front matter con los datos del trabajo (video, objetivo, verificación, costo).
 - `indice.md` se regenera completo a partir de esos front matter.
-- `proyectos/<nombre>.md` lista enlaces a los videos que agregas con `--proyecto`.
+- `.yti/proyectos/<id>.json` es la fuente de cada proyecto; `proyectos/<slug>.md` es una vista generada (se regenera sola, edítala con `yti proyecto`).
+- Los `proyectos/*.md` de versiones anteriores se migran a JSON la primera vez que se usa un proyecto; el original queda respaldado en `.yti/proyectos/importados/`.
 - `.yti/` es el estado interno de la cola: no lo edites a mano.
 
 ## Actualización

@@ -111,7 +111,7 @@ def _codigo_y_mensaje(detalle, codigo_defecto: str, mensaje_defecto: str) -> tup
 
 def _sin_claves(texto: str, claves: tuple[str, ...]) -> str:
     for clave in claves:
-        if clave:
+        if clave and clave.strip():  # una clave en blanco convertiría los espacios del mensaje en ***
             texto = texto.replace(clave, "***")
     return texto
 

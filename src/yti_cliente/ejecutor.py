@@ -5,7 +5,7 @@ import time as _time
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypeVar
 
 import httpx
 import platformdirs
@@ -26,25 +26,22 @@ from yti_cliente.api import (
 from yti_cliente.biblioteca import Biblioteca, normalizar_objetivo, texto_verificacion
 from yti_cliente.cola import Cola, ahora_utc, desde_iso, iso
 from yti_cliente.config import Config, ErrorConfig, validar_clave_proveedor, validar_idioma
+from yti_cliente.errores import ErrorLocal
+from yti_cliente.limites import MAX_OBJETIVO
+from yti_cliente.proyectos import Proyectos, es_id_proyecto
+from yti_cliente.proyectos_migracion import migrar_antiguos_contando
+from yti_cliente.proyectos_vista import regenerar_vistas
 from yti_cliente.render_md import analisis_a_markdown, marca_tiempo
 from yti_cliente.testigo import ResultadoTestigo, SinConexion
 from yti_cliente.youtube import UrlNoAdmitida, extraer_video_id
 
 log = logging.getLogger(__name__)
 
-MAX_OBJETIVO = 1000
 _ESTIMACION_GENERICA = "entre 2 y 10 minutos según la duración"
 _AVISO_VERSION = (
     "la API usa una versión no compatible; actualiza con `uv tool upgrade yt-insights-cliente`"
 )
 _REPORTAR = "es un fallo del cliente; reporta el problema"
-
-
-class ErrorLocal(Exception):
-    def __init__(self, codigo: str, mensaje: str):
-        super().__init__(f"{codigo}: {mensaje}")
-        self.codigo = codigo
-        self.mensaje = mensaje
 
 
 class _TomaPerdida(Exception):
@@ -60,9 +57,10 @@ class Contexto:
     obtener_testigo: Callable[[str], ResultadoTestigo]
     transport: httpx.BaseTransport | None
     ruta_cache_version: Path
+    proyectos: Proyectos
 
     def api(self) -> ClienteApi:
-        if not self.cfg.clave_yti:
+        if _falta(self.cfg.clave_yti):
             raise ErrorLocal(
                 "FALTA_CLAVE",
                 "Falta la clave de yt-insights; configúrala con `yti config --clave yt-insights`.",
@@ -86,15 +84,18 @@ def crear_contexto(
     transport: httpx.BaseTransport | None = None,
 ) -> Contexto:
     reloj = reloj or ahora_utc
+    cola = Cola(cfg.biblioteca, reloj=reloj)
+    biblioteca = Biblioteca(cfg.biblioteca)
     return Contexto(
         cfg=cfg,
-        cola=Cola(cfg.biblioteca, reloj=reloj),
-        biblioteca=Biblioteca(cfg.biblioteca),
+        cola=cola,
+        biblioteca=biblioteca,
         reloj=reloj,
         obtener_testigo=obtener_testigo or _testigo.obtener_testigo,
         transport=transport,
         ruta_cache_version=platformdirs.user_state_path("yt-insights-cliente", appauthor=False)
         / "version.json",
+        proyectos=Proyectos(biblioteca, cola),
     )
 
 
@@ -107,23 +108,50 @@ def estimacion(duracion_s: int | None) -> str:
 # --- registrar ---
 
 
-def _verificar_claves(cfg: Config, modo: str) -> None:
-    if not cfg.clave_yti:
+def _falta(clave: str | None) -> bool:
+    """Una clave ausente, vacía o solo con espacios cuenta como no configurada."""
+    return not (clave or "").strip()
+
+
+_OPCION_CONFIGURAR = "configúrala con `yti config --clave anthropic`"
+_OPCION_CLI = "pide solo la transcripción con `yti encolar <url> --solo-transcripcion`"
+_OPCION_MCP = (
+    'pide solo la transcripción con `encolar_video(..., solo_transcripcion=True)` y analízala '
+    'en esta sesión con `leer_resultado(video, contenido="transcripcion")`'
+)
+
+
+def mensaje_falta_anthropic(canal: str | None = None) -> str:
+    """Error de análisis sin clave de Anthropic con las opciones del canal ("cli", "mcp" o ambos si es None).
+
+    Nunca se cambia la solicitud a solo transcripción en silencio: el usuario elige.
+    """
+    if canal == "cli":
+        opciones = f"{_OPCION_CONFIGURAR} o {_OPCION_CLI}"
+    elif canal == "mcp":
+        opciones = f"{_OPCION_CONFIGURAR} o {_OPCION_MCP}"
+    else:
+        opciones = (
+            f"{_OPCION_CONFIGURAR}; o pide solo la transcripción "
+            "(`--solo-transcripcion` en la terminal, `solo_transcripcion=True` en el MCP) y analízala "
+            "con tu asistente"
+        )
+    return f"Falta la clave de Anthropic, necesaria para el análisis. Opciones: {opciones}."
+
+
+def _verificar_claves(cfg: Config, modo: str, canal: str | None = None) -> None:
+    if _falta(cfg.clave_yti):
         raise ErrorLocal(
             "FALTA_CLAVE",
             "Falta la clave de yt-insights; configúrala con `yti config --clave yt-insights`.",
         )
-    if not cfg.clave_gemini:
+    if _falta(cfg.clave_gemini):
         raise ErrorLocal(
             "FALTA_CLAVE",
             "Falta la clave de Gemini; configúrala con `yti config --clave gemini`.",
         )
-    if modo == "analisis" and not cfg.clave_anthropic:
-        raise ErrorLocal(
-            "FALTA_CLAVE",
-            "Falta la clave de Anthropic; configúrala con `yti config --clave anthropic` "
-            "o pide solo la transcripción con `--solo-transcripcion`.",
-        )
+    if modo == "analisis" and _falta(cfg.clave_anthropic):
+        raise ErrorLocal("FALTA_CLAVE", mensaje_falta_anthropic(canal))
     proveedores = [("gemini", cfg.clave_gemini)]
     if modo == "analisis":
         proveedores.append(("anthropic", cfg.clave_anthropic))
@@ -140,6 +168,42 @@ def _aviso_duplicado(texto: str, url: str) -> str:
     return f"{texto}. Para enviarlo igualmente: yti encolar {url} --forzar"
 
 
+T = TypeVar("T")
+
+_AVISO_VISTAS = "No se pudieron regenerar las vistas de proyectos; se corregirán en la próxima operación."
+
+
+def preparar_proyectos(ctx: Contexto) -> Proyectos:
+    """Migra los `.md` antiguos y devuelve `ctx.proyectos`. El candado lo sostiene quien llama."""
+    migrados = 0
+    try:
+        avisos, migrados = migrar_antiguos_contando(ctx.proyectos)
+        for aviso in avisos:
+            log.warning("migración de proyectos: %s", aviso)
+    except OSError as e:
+        log.warning("no se pudieron migrar los proyectos antiguos: %s", e)
+    if migrados:
+        actualizar_vistas(ctx)
+    return ctx.proyectos
+
+
+def actualizar_vistas(ctx: Contexto) -> str | None:
+    """Regenera las vistas; ante un fallo de disco registra y devuelve un aviso."""
+    try:
+        regenerar_vistas(ctx.proyectos)
+    except Exception as e:  # noqa: BLE001 - la vista nunca tumba la operación
+        log.warning("no se pudieron regenerar las vistas de proyectos: %s", getattr(e, "mensaje", e))
+        return _AVISO_VISTAS
+    return None
+
+
+def con_proyectos(ctx: Contexto, accion: Callable[[Proyectos], T]) -> tuple[T, str | None]:
+    """Ejecuta `accion` con el candado, tras migrar, y regenera las vistas al final."""
+    with ctx.cola.candado():
+        resultado = accion(preparar_proyectos(ctx))
+        return resultado, actualizar_vistas(ctx)
+
+
 def registrar(
     ctx: Contexto,
     url: str,
@@ -150,6 +214,7 @@ def registrar(
     proyecto: str | None = None,
     forzar: bool = False,
     idioma: str | None = None,
+    canal: str = "cli",
 ) -> ResultadoEncolar:
     try:
         video_id = extraer_video_id(url)
@@ -166,9 +231,25 @@ def registrar(
         except ErrorConfig as err:
             raise ErrorLocal("IDIOMA_INVALIDO", str(err)) from None
     modo = "transcripcion" if solo_transcripcion else "analisis"
-    normalizado = normalizar_objetivo(objetivo)
 
     with ctx.cola.candado():
+        proyectos = preparar_proyectos(ctx)
+        proy = None
+        sufijo = ""
+        creado_proy = False
+        if proyecto:
+            proy, creado = proyectos.resolver_o_crear(proyecto)
+            creado_proy = creado
+            if creado:
+                sufijo = f" Proyecto «{proy.nombre}» creado."
+            if objetivo is None and modo == "analisis":
+                objetivo = proy.objetivo
+        if objetivo is not None and len(objetivo) > MAX_OBJETIVO:
+            raise ErrorLocal(
+                "OBJETIVO_LARGO", f"El objetivo supera los {MAX_OBJETIVO} caracteres."
+            )
+        normalizado = normalizar_objetivo(objetivo)
+
         if not forzar:
             existente = (
                 ctx.biblioteca.tiene_transcripcion(video_id)
@@ -176,28 +257,36 @@ def registrar(
                 else ctx.biblioteca.buscar_analisis(video_id, objetivo)
             )
             if existente is not None:
-                if proyecto:
-                    ctx.biblioteca.agregar_a_proyecto(proyecto, video_id)
+                if proy is not None:
+                    proyectos.agregar_video(proy.id, video_id)
+                    actualizar_vistas(ctx)
                 return ResultadoEncolar(
                     True,
-                    _aviso_duplicado(f"Ya está en la biblioteca: {existente}", url),
+                    _aviso_duplicado(f"Ya está en la biblioteca: {existente}", url) + sufijo,
                     None,
                     estimacion(None),
                 )
             activo = ctx.cola.buscar_activo(video_id, normalizado, modo)
             if activo is not None:
-                if proyecto and not activo.get("proyecto"):
-                    ctx.cola.actualizar_si(
-                        activo["id_local"], {"proyecto": activo.get("proyecto")}, {"proyecto": proyecto}
-                    )
+                if proy is not None:
+                    proyectos.agregar_video(proy.id, video_id)
+                    if not activo.get("proyecto"):
+                        ctx.cola.actualizar_si(
+                            activo["id_local"], {"proyecto": activo.get("proyecto")}, {"proyecto": proy.id}
+                        )
+                    actualizar_vistas(ctx)
                 return ResultadoEncolar(
                     True,
-                    _aviso_duplicado(f"Ya está en la cola con el id {activo['id_local']}", url),
+                    _aviso_duplicado(f"Ya está en la cola con el id {activo['id_local']}", url) + sufijo,
                     activo,
                     estimacion(activo.get("duracion_s")),
                 )
 
-        _verificar_claves(ctx.cfg, modo)
+        if creado_proy:
+            actualizar_vistas(ctx)
+        _verificar_claves(ctx.cfg, modo, canal)
+        if proy is not None:
+            proyectos.agregar_video(proy.id, video_id)
         trabajo = ctx.cola.crear(
             {
                 "url": url,
@@ -206,12 +295,14 @@ def registrar(
                 "objetivo": objetivo,
                 "idioma": idioma or ctx.cfg.idioma,
                 "objetivo_normalizado": normalizado,
-                "proyecto": proyecto,
+                "proyecto": proy.id if proy is not None else None,
                 "testigo_estado": "desactivado" if sin_testigo else "pendiente",
             }
         )
+        if proy is not None:
+            actualizar_vistas(ctx)
         return ResultadoEncolar(
-            False, f"Trabajo {trabajo['id_local']} registrado.", trabajo, estimacion(None)
+            False, f"Trabajo {trabajo['id_local']} registrado." + sufijo, trabajo, estimacion(None)
         )
 
 
@@ -221,7 +312,7 @@ def registrar(
 def _limpio(ctx: Contexto, texto: str) -> str:
     cfg = ctx.cfg
     for clave in (cfg.clave_yti, cfg.clave_gemini, cfg.clave_anthropic):
-        if clave:
+        if not _falta(clave):
             texto = texto.replace(clave, "***")
     return texto
 
@@ -249,10 +340,7 @@ def _error_final(ctx: Contexto, e: ErrorApi) -> dict:
     elif codigo == "FALTA_CLAVE_GEMINI":
         mensaje = "Falta la clave de Gemini; configúrala con `yti config --clave gemini`."
     elif codigo == "FALTA_CLAVE_ANTHROPIC":
-        mensaje = (
-            "Falta la clave de Anthropic; configúrala con `yti config --clave anthropic` "
-            "o usa `--solo-transcripcion`."
-        )
+        mensaje = mensaje_falta_anthropic()
     elif codigo == "CLAVE_MAL_FORMADA":
         mensaje = "Una clave tiene un formato inválido; revisa `yti config`."
     elif codigo in ("FUENTE_NO_ADMITIDA", "CALLBACK_NO_PERMITIDO"):
@@ -502,6 +590,20 @@ def _error_remoto(ctx: Contexto, trabajo: dict, error: dict) -> None:
     _poner_error(ctx, trabajo, codigo, mensaje)
 
 
+def _enlazar_en_baja(ctx: Contexto, ref: str, video_id: str) -> None:
+    """Un id no toca la pertenencia (ya la enlazó `registrar`); un nombre legado se resuelve o crea."""
+    try:
+        proyectos = preparar_proyectos(ctx)
+        if es_id_proyecto(ref):
+            proyectos.resolver(ref)
+        else:
+            p, _ = proyectos.resolver_o_crear(ref)
+            proyectos.agregar_video(p.id, video_id)
+    except Exception as e:  # noqa: BLE001 - enlazar nunca impide dejar el trabajo en la biblioteca
+        log.warning("la baja no pudo enlazar el video %s al proyecto %s: %s",
+                    video_id, ref, getattr(e, "mensaje", e))
+
+
 def bajar_resultado(ctx: Contexto, trabajo: dict, vista: dict) -> dict:
     """Escribe el resultado en la biblioteca y deja el trabajo `en_biblioteca` (idempotente)."""
     id_local = trabajo["id_local"]
@@ -569,8 +671,9 @@ def bajar_resultado(ctx: Contexto, trabajo: dict, vista: dict) -> dict:
                 ),
             )
         if trabajo.get("proyecto"):
-            bib.agregar_a_proyecto(trabajo["proyecto"], video_id)
+            _enlazar_en_baja(ctx, trabajo["proyecto"], video_id)
         bib.regenerar_indice()
+        actualizar_vistas(ctx)
         ctx.cola.borrar_testigo(id_local)
         cambios = {"estado": "en_biblioteca", "estado_remoto": "completado", "uso": uso, "error": None}
         if aviso:
