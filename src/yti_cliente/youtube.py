@@ -46,5 +46,13 @@ def extraer_video_id(url: str) -> str:
     raise UrlNoAdmitida("La ruta de la URL no corresponde a un video.")
 
 
+def resolver_ref_video(texto: str) -> str:
+    """Devuelve el video_id a partir de una URL admitida o de un id de 11 caracteres."""
+    texto = texto.strip()
+    if _ID_VALIDO.fullmatch(texto):
+        return texto
+    return extraer_video_id(texto)
+
+
 def url_corta(video_id: str) -> str:
     return f"https://youtu.be/{video_id}"

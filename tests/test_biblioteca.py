@@ -2,6 +2,9 @@ import re
 
 import pytest
 
+from yti_cliente.cola import Cola
+from yti_cliente.proyectos import Proyectos
+from yti_cliente.proyectos_vista import regenerar_vistas
 from yti_cliente.biblioteca import (
     Biblioteca,
     front_matter,
@@ -172,12 +175,14 @@ def test_indice(bib):
 
 def test_proyecto(bib):
     _dos_videos(bib)
-    p = bib.agregar_a_proyecto("Arquitectura", "V2")
-    bib.agregar_a_proyecto("Arquitectura", "V2")
-    assert p == bib.raiz / "proyectos" / "arquitectura.md"
-    texto = p.read_text(encoding="utf-8")
-    assert texto.startswith("# Arquitectura")
-    assert texto.count("- [Nuevo](../videos/V2-nuevo/)") == 1
+    proyectos = Proyectos(bib, Cola(bib.raiz))
+    proyectos.crear("Arquitectura")
+    proyectos.agregar_video("Arquitectura", "V2")
+    proyectos.agregar_video("Arquitectura", "V2")
+    regenerar_vistas(proyectos)
+    texto = (bib.raiz / "proyectos" / "arquitectura.md").read_text(encoding="utf-8")
+    assert texto.count("](../videos/V2-nuevo/analisis-migrar.md)") == 1
+    assert not hasattr(Biblioteca, "agregar_a_proyecto")
 
 
 def test_listar_buscar_sin_acentos(bib):

@@ -132,10 +132,17 @@ y escríbela con las barras invertidas duplicadas en el JSON, por ejemplo `"comm
 
 | Herramienta | Qué hace |
 |---|---|
-| `encolar_video(url, objetivo?, solo_transcripcion?, idioma?)` | Registra el video en la cola local y vuelve de inmediato; el envío a la API sigue en segundo plano. Un duplicado devuelve un aviso: para forzarlo, hazlo desde la terminal con `yti encolar <url> --forzar`. `idioma` (ISO 639-1) es el idioma en que se redacta el análisis: el LLM del host debe pasar el que usa el usuario en la conversación; si se omite, se usa el de `yti config --idioma`. |
+| `encolar_video(url, objetivo?, solo_transcripcion?, idioma?, proyecto?)` | Registra el video en la cola local y vuelve de inmediato; el envío a la API sigue en segundo plano. Un duplicado devuelve un aviso: para forzarlo, hazlo desde la terminal con `yti encolar <url> --forzar`. `idioma` (ISO 639-1) es el idioma en que se redacta el análisis: el LLM del host debe pasar el que usa el usuario en la conversación; si se omite, se usa el de `yti config --idioma`. `proyecto` suma el video a un proyecto: se resuelve por nombre, se crea si no existe y su objetivo es el objetivo por defecto del video. |
 | `ver_cola()` | Actualiza la cola, muestra el estado de cada trabajo con su tiempo estimado y baja a la biblioteca los resultados listos (sección «Recién bajados»). |
 | `listar_biblioteca(buscar?)` | Lista los videos de la biblioteca; `buscar` filtra por título, canal u objetivo. |
 | `leer_resultado(video, objetivo?, contenido?)` | Devuelve el análisis (`contenido="analisis"`, por defecto) o la transcripción (`"transcripcion"`). `video` puede ser un video_id, una URL o parte del título. |
+| `listar_proyectos()` | Lista los proyectos con su objetivo y la cantidad de videos. |
+| `leer_proyecto(proyecto)` | Devuelve el objetivo, los videos y las notas de un proyecto. |
+| `crear_proyecto(nombre, objetivo?)` | Crea un proyecto, con un objetivo de investigación opcional. |
+| `agregar_a_proyecto(proyecto, video)` | Suma un video (URL o video_id) a un proyecto; si el proyecto no existe, lo crea. |
+| `anotar_proyecto(proyecto, texto)` | Guarda una nota (por ejemplo, una conclusión) en el proyecto. |
+
+Para investigar un tema con varios videos: crea el proyecto con su objetivo, encola cada video con `proyecto`, lee el proyecto y cada resultado para sintetizar, y guarda la conclusión con `anotar_proyecto`. Quitar, editar y borrar proyectos solo se hace desde la terminal.
 
 Mientras el servidor está activo, sondea la cola cada 3 minutos (180 s) y solo si hay trabajos activos; así los resultados llegan a la biblioteca aunque no llames a `ver_cola`.
 

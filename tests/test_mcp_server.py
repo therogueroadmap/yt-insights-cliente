@@ -86,17 +86,18 @@ def _sembrar_enviado(ctx, **extra):
     return ctx.cola.liberar(trabajo, estado="enviado", id_remoto="remoto-1", estado_remoto="pendiente")
 
 
-async def test_cuatro_herramientas(env):
+async def test_herramientas_y_esquemas(env):
     herramientas = await construir_servidor(env.servicio).list_tools()
     assert {t.name for t in herramientas} == {
-        "encolar_video", "ver_cola", "listar_biblioteca", "leer_resultado"
+        "encolar_video", "ver_cola", "listar_biblioteca", "leer_resultado",
+        "listar_proyectos", "leer_proyecto", "crear_proyecto", "agregar_a_proyecto", "anotar_proyecto",
     }
     por_nombre = {t.name: t for t in herramientas}
     assert set(por_nombre["leer_resultado"].input_schema["properties"]) == {
         "video", "objetivo", "contenido"
     }
     assert set(por_nombre["encolar_video"].input_schema["properties"]) == {
-        "url", "objetivo", "solo_transcripcion", "idioma"
+        "url", "objetivo", "solo_transcripcion", "idioma", "proyecto"
     }
     for t in herramientas:
         assert "self" not in t.input_schema.get("properties", {})
@@ -393,3 +394,50 @@ async def test_encolar_describe_el_parametro_idioma(env):
     herramientas = {t.name: t for t in await construir_servidor(env.servicio).list_tools()}
     desc = herramientas["encolar_video"].input_schema["properties"]["idioma"].get("description", "")
     assert "639-1" in desc
+
+
+async def test_crear_listar_y_leer_proyecto(env):
+    assert "creado" in await env.servicio.crear_proyecto("Agentes de IA", "Comparar enfoques")
+    lista = await env.servicio.listar_proyectos()
+    assert "Agentes de IA" in lista and "Comparar enfoques" in lista and "0 videos" in lista
+    texto = await env.servicio.leer_proyecto("Agentes de IA")
+    assert "# Agentes de IA" in texto and "Comparar enfoques" in texto
+
+
+async def test_listar_proyectos_vacio(env):
+    assert await env.servicio.listar_proyectos() == "No hay proyectos."
+
+
+async def test_agregar_a_proyecto_crea_y_valida(env):
+    assert "P" in await env.servicio.agregar_a_proyecto("P", URL)
+    assert [v["video_id"] for v in env.ctx.proyectos.resolver("P").videos] == [VID]
+    assert "URL" in await env.servicio.agregar_a_proyecto("Q", "no-valido")
+    assert [p.nombre for p in env.ctx.proyectos.listar()] == ["P"]  # Q no se creó
+
+
+async def test_anotar_proyecto_con_origen_mcp(env):
+    await env.servicio.crear_proyecto("P")
+    await env.servicio.anotar_proyecto("P", "conclusión")
+    assert env.ctx.proyectos.resolver("P").notas[0]["origen"] == "mcp"
+
+
+async def test_errores_de_proyecto_se_devuelven_como_texto(env):
+    assert "no existe" in (await env.servicio.leer_proyecto("nada")).lower()
+    assert "no existe" in (await env.servicio.anotar_proyecto("nada", "x")).lower()
+
+
+async def test_encolar_video_con_proyecto(env):
+    await env.servicio.crear_proyecto("P", "Comparar enfoques")
+    r = await env.servicio.encolar_video(URL, proyecto="P")
+    await env.servicio.esperar_fondo()
+    t = env.ctx.cola.listar()[0]
+    assert t["proyecto"] == env.ctx.proyectos.resolver("P").id and t["objetivo"] == "Comparar enfoques"
+    assert "registrado" in r
+
+
+async def test_servidor_expone_las_herramientas_y_las_instrucciones(env):
+    async with Client(construir_servidor(env.servicio)) as cliente:
+        nombres = {t.name for t in (await cliente.list_tools()).tools}
+    assert {"listar_proyectos", "leer_proyecto", "crear_proyecto", "agregar_a_proyecto",
+            "anotar_proyecto", "encolar_video"} <= nombres
+    assert "anotar_proyecto" in mcp_server._INSTRUCCIONES and "leer_proyecto" in mcp_server._INSTRUCCIONES
