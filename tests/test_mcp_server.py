@@ -172,6 +172,26 @@ async def test_encolar_sin_claves_devuelve_texto(env):
     assert env.ctx.cola.listar() == []
 
 
+@pytest.mark.parametrize("valor", [None, "", "   "])
+async def test_encolar_analisis_sin_clave_anthropic_falla_con_opciones_del_mcp(env, valor):
+    env.ctx.cfg = dataclasses.replace(env.ctx.cfg, clave_anthropic=valor)
+    texto = await env.servicio.encolar_video(URL, OBJETIVO)
+    assert "Falta la clave de Anthropic" in texto
+    assert "yti config --clave anthropic" in texto
+    assert "solo_transcripcion=True" in texto
+    assert 'leer_resultado' in texto and 'contenido="transcripcion"' in texto
+    assert "--solo-transcripcion" not in texto
+    assert env.ctx.cola.listar() == []
+    assert env.post.call_count == 0
+
+
+async def test_encolar_solo_transcripcion_sin_clave_anthropic_se_registra(env):
+    env.ctx.cfg = dataclasses.replace(env.ctx.cfg, clave_anthropic=None)
+    texto = await env.servicio.encolar_video(URL, solo_transcripcion=True)
+    assert "registrado" in texto
+    assert [t["modo"] for t in env.ctx.cola.listar()] == ["transcripcion"]
+
+
 async def test_error_en_fondo_se_registra_y_no_lanza(env, caplog):
     def roto(url):
         raise RuntimeError("fallo inesperado del testigo")

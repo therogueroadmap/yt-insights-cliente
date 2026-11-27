@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- Pedir un análisis sin clave de Anthropic falla con `FALTA_CLAVE` y lista las opciones según el canal: en la terminal, configurar la clave o usar `--solo-transcripcion`; en el MCP, configurar la clave o pedir `solo_transcripcion=True` y analizar la transcripción en la sesión con `leer_resultado`. La solicitud nunca se cambia a solo transcripción en silencio.
+
+### Fixed
+- Una clave vacía o con solo espacios cuenta como no configurada (antes daba `CLAVE_MAL_FORMADA`).
+- Una clave en blanco ya no convierte en `***` los espacios de los mensajes de error al ocultar las claves.
+
 ---
 
 ## [0.1.1] — 2026-11-26

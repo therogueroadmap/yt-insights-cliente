@@ -81,7 +81,7 @@ class Servicio:
         try:
             res = await asyncio.to_thread(
                 registrar, self.ctx, url, objetivo=objetivo, solo_transcripcion=solo_transcripcion,
-                idioma=idioma,
+                idioma=idioma, canal="mcp",
             )
         except ErrorLocal as e:
             return e.mensaje

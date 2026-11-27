@@ -16,7 +16,7 @@ _FORMATO = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 def redactar(texto: str, claves: Iterable[str]) -> str:
     texto = _CABECERA.sub(r"\1***", texto)
-    for clave in sorted({c for c in claves if c}, key=len, reverse=True):
+    for clave in sorted({c for c in claves if c and c.strip()}, key=len, reverse=True):
         texto = texto.replace(clave, "***")
     return texto
 

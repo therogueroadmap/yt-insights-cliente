@@ -121,3 +121,7 @@ def test_idempotente_con_ytdlp(tmp_path):
     logging.getLogger("yti_cliente.ytdlp").warning("una vez")
     _vaciar()
     assert ruta.read_text(encoding="utf-8").count("una vez") == 1
+
+
+def test_redactar_ignora_claves_en_blanco():
+    assert redactar("un mensaje normal", [None, "", " ", "   "]) == "un mensaje normal"
