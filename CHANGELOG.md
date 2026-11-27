@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- MCP: el servidor se anuncia con el título «YouTube Insights», su versión y el icono del panel, para los clientes MCP que muestran iconos. Claude Desktop no lo muestra en servidores locales.
+
 ---
 
 ## [0.2.0] — 2026-11-27
