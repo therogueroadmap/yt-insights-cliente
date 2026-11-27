@@ -441,3 +441,22 @@ async def test_servidor_expone_las_herramientas_y_las_instrucciones(env):
     assert {"listar_proyectos", "leer_proyecto", "crear_proyecto", "agregar_a_proyecto",
             "anotar_proyecto", "encolar_video"} <= nombres
     assert "anotar_proyecto" in mcp_server._INSTRUCCIONES and "leer_proyecto" in mcp_server._INSTRUCCIONES
+
+
+async def test_servidor_anuncia_titulo_version_e_icono(env, monkeypatch):
+    from yti_cliente import __version__
+
+    async def quieto(servicio):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(mcp_server, "ciclo_sondeo", quieto)
+    async with Client(construir_servidor(env.servicio)) as cliente:
+        info = cliente.server_info
+    assert info.name == "yt-insights"
+    assert info.title == "YouTube Insights"
+    assert info.version == __version__
+    assert info.icons, "el servidor debe anunciar al menos un icono"
+    icono = info.icons[0]
+    assert icono.mime_type == "image/svg+xml"
+    assert icono.src.startswith("data:image/svg+xml;base64,")
+    assert icono.sizes == ["any"]
