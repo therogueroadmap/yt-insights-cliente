@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] — 2026-11-27
+
 ### Added
 - MCP: el servidor se anuncia con el título «YouTube Insights», su versión y el icono del panel, para los clientes MCP que muestran iconos. Claude Desktop no lo muestra en servidores locales.
 - MCP: parámetro `forzar` en `encolar_video` para repetir un análisis o una transcripción que ya está en la biblioteca. Desde el MCP no duplica un trabajo que ya está en la cola.

@@ -1,6 +1,6 @@
 [project]
 name = "yt-insights-cliente"
-version = "0.2.0"
+version = "0.3.0"
 description = "Cliente local de yt-insights: terminal yti y servidor MCP stdio."
 readme = "README.md"
 requires-python = ">=3.11"
