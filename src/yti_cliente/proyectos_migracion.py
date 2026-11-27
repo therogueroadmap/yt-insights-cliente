@@ -122,7 +122,12 @@ def _migrar_uno(proyectos: Proyectos, ruta: Path, texto: str) -> None:
         proyectos.dir_importados.mkdir(parents=True, exist_ok=True)
         ruta.replace(_destino_importado(proyectos, ruta.name))
     except (ErrorLocal, OSError):
-        proyectos.borrar(p.id)  # deshace: el original sigue intacto y se reintentará
+        # Deshace solo el JSON: `borrar` también elimina la vista `<slug>.md`, que puede
+        # ser el original del usuario. El original sigue intacto y se reintentará.
+        try:
+            proyectos._ruta(p.id).unlink(missing_ok=True)
+        except OSError as e_limpieza:
+            log.warning("no se pudo deshacer el proyecto %s: %s", p.id, e_limpieza)
         raise
 
 

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from yti_cliente.limites import MAX_NOTA
 from yti_cliente.proyectos import AVISO_VISTA
 from yti_cliente.proyectos_migracion import migrar_antiguos
@@ -101,3 +103,36 @@ def test_destino_importado_existente_usa_sufijo(proyectos):
     assert migrar_antiguos(proyectos) == []
     assert (proyectos.dir_importados / "viejo.md").read_text(encoding="utf-8") == "previo"
     assert (proyectos.dir_importados / "viejo-2.md").read_text(encoding="utf-8").startswith("# Viejo")
+
+
+def test_fallo_tras_crear_no_borra_el_md_original(proyectos, monkeypatch):
+    contenido = "# Arquitectura\n\nIdeas sueltas\n"
+    _viejo(proyectos, "arquitectura", contenido)
+    original = (proyectos.dir_vistas / "arquitectura.md").read_bytes()
+
+    def falla(*args, **kwargs):
+        raise OSError("disco lleno")
+
+    monkeypatch.setattr(type(proyectos), "anotar", falla)
+    avisos = migrar_antiguos(proyectos)
+    assert len(avisos) == 1 and "disco lleno" in avisos[0]
+    assert (proyectos.dir_vistas / "arquitectura.md").read_bytes() == original
+    assert list(proyectos.dir_json.glob("*.json")) == []
+
+
+def test_fallo_en_la_limpieza_no_enmascara_el_error_original(proyectos, monkeypatch, caplog):
+    _viejo(proyectos, "arquitectura", "# Arquitectura\n\nIdeas\n")
+
+    def falla(*args, **kwargs):
+        raise OSError("disco lleno")
+
+    def unlink_bloqueado(self, missing_ok=False):
+        raise OSError("bloqueado")
+
+    monkeypatch.setattr(type(proyectos), "anotar", falla)
+    monkeypatch.setattr(Path, "unlink", unlink_bloqueado)
+    avisos = migrar_antiguos(proyectos)
+    assert len(avisos) == 1 and "disco lleno" in avisos[0]
+    assert "bloqueado" in caplog.text
+    monkeypatch.undo()
+    assert (proyectos.dir_vistas / "arquitectura.md").is_file()
