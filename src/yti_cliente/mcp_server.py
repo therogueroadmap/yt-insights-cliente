@@ -1,6 +1,7 @@
 """Servidor MCP (stdio): herramientas sobre la cola, la biblioteca y los proyectos locales (§8.4)."""
 
 import asyncio
+import base64
 import contextlib
 import logging
 import sys
@@ -8,8 +9,10 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from mcp.server.mcpserver import MCPServer
+from mcp.types import Icon
 from pydantic import Field
 
+from yti_cliente import __version__
 from yti_cliente.config import ErrorConfig, cargar_config, claves_cargadas
 from yti_cliente.ejecutor import (
     Contexto,
@@ -86,6 +89,17 @@ class Servicio:
                 )
             ),
         ] = None,
+        forzar: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Repite un análisis o una transcripción que ya está en la biblioteca con el mismo "
+                    "objetivo; el resultado nuevo reemplaza al anterior y consume cuota de la API. Úsalo "
+                    "solo si el usuario lo pide explícitamente tras el aviso de duplicado. No duplica un "
+                    "trabajo que ya está en la cola."
+                )
+            ),
+        ] = False,
     ) -> str:
         """Encola un video de YouTube para su análisis o su transcripción y retorna de inmediato.
 
@@ -96,7 +110,7 @@ class Servicio:
         try:
             res = await asyncio.to_thread(
                 registrar, self.ctx, url, objetivo=objetivo, solo_transcripcion=solo_transcripcion,
-                idioma=idioma, proyecto=proyecto, canal="mcp",
+                idioma=idioma, proyecto=proyecto, forzar=forzar, canal="mcp",
             )
         except ErrorLocal as e:
             return e.mensaje
@@ -105,10 +119,11 @@ class Servicio:
         tarea = asyncio.create_task(self._enviar_fondo(res.trabajo))
         self._tareas.add(tarea)
         tarea.add_done_callback(self._tareas.discard)
-        return (
+        texto = (
             f"Trabajo {res.trabajo['id_local']} registrado; se envía en segundo plano. "
             f"Tiempo estimado: {res.estimacion}. Consulta el avance con ver_cola."
         )
+        return f"{texto}\n{res.aviso}" if res.aviso else texto
 
     async def _en_proyectos(self, accion, formato) -> str:
         """Corre `accion` con el candado en un hilo; devuelve el texto de `formato(resultado)` y el aviso de vistas."""
@@ -265,6 +280,20 @@ async def ciclo_sondeo(servicio: Servicio, *, intervalo_s: float = INTERVALO_SON
             log.exception("Falló el sondeo periódico; se reintenta en el próximo intervalo")
 
 
+# Mismo icono que el favicon del panel (yt-insights/panel/index.html).
+_ICONO_SVG = (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+    "<rect width='32' height='32' rx='6' fill='#0a1b35'/>"
+    "<circle cx='16' cy='16' r='9' fill='#f7792c'/>"
+    "</svg>"
+)
+ICONO = Icon(
+    src="data:image/svg+xml;base64," + base64.b64encode(_ICONO_SVG.encode("utf-8")).decode("ascii"),
+    mime_type="image/svg+xml",
+    sizes=["any"],
+)
+
+
 def construir_servidor(servicio: Servicio) -> MCPServer:
     @contextlib.asynccontextmanager
     async def lifespan(servidor: MCPServer) -> AsyncIterator[None]:
@@ -277,7 +306,14 @@ def construir_servidor(servicio: Servicio) -> MCPServer:
                 await tarea
             await servicio.esperar_fondo(timeout=TOPE_APAGADO_S)
 
-    servidor = MCPServer("yt-insights", instructions=_INSTRUCCIONES, lifespan=lifespan)
+    servidor = MCPServer(
+        "yt-insights",
+        title="YouTube Insights",
+        version=__version__,
+        icons=[ICONO],
+        instructions=_INSTRUCCIONES,
+        lifespan=lifespan,
+    )
     servidor.add_tool(servicio.encolar_video, name="encolar_video")
     servidor.add_tool(servicio.ver_cola, name="ver_cola")
     servidor.add_tool(servicio.listar_biblioteca, name="listar_biblioteca")
