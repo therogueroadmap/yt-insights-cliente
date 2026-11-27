@@ -48,6 +48,8 @@ Si prefieres pasar las claves por variables de entorno (queda en texto plano en 
 
 Después de editar el archivo, reinicia el host por completo.
 
+Para actualizar el servidor a una versión nueva: `uvx` guarda la versión en caché y no la renueva sola. Ejecuta una vez `uvx --refresh --from git+https://github.com/therogueroadmap/yt-insights-cliente yti --help` y reinicia el host.
+
 ## 3. Configuración por host
 
 ### Claude Desktop
