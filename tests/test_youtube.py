@@ -1,6 +1,6 @@
 import pytest
 
-from yti_cliente.youtube import UrlNoAdmitida, extraer_video_id, url_corta
+from yti_cliente.youtube import UrlNoAdmitida, extraer_video_id, resolver_ref_video, url_corta
 
 ID = "dQw4w9WgXcQ"
 
@@ -35,3 +35,15 @@ def test_rechaza(url):
 
 def test_url_corta():
     assert url_corta(ID) == f"https://youtu.be/{ID}"
+
+
+def test_resolver_ref_video_url_e_id():
+    assert resolver_ref_video("https://youtu.be/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+    assert resolver_ref_video("  dQw4w9WgXcQ ") == "dQw4w9WgXcQ"
+    assert resolver_ref_video("a-b_c123456") == "a-b_c123456"
+
+
+@pytest.mark.parametrize("texto", ["", "corto", "dQw4w9WgXcQ12", "https://example.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXc!"])
+def test_resolver_ref_video_invalido(texto):
+    with pytest.raises(UrlNoAdmitida):
+        resolver_ref_video(texto)

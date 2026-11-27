@@ -26,25 +26,19 @@ from yti_cliente.api import (
 from yti_cliente.biblioteca import Biblioteca, normalizar_objetivo, texto_verificacion
 from yti_cliente.cola import Cola, ahora_utc, desde_iso, iso
 from yti_cliente.config import Config, ErrorConfig, validar_clave_proveedor, validar_idioma
+from yti_cliente.errores import ErrorLocal
+from yti_cliente.limites import MAX_OBJETIVO
 from yti_cliente.render_md import analisis_a_markdown, marca_tiempo
 from yti_cliente.testigo import ResultadoTestigo, SinConexion
 from yti_cliente.youtube import UrlNoAdmitida, extraer_video_id
 
 log = logging.getLogger(__name__)
 
-MAX_OBJETIVO = 1000
 _ESTIMACION_GENERICA = "entre 2 y 10 minutos según la duración"
 _AVISO_VERSION = (
     "la API usa una versión no compatible; actualiza con `uv tool upgrade yt-insights-cliente`"
 )
 _REPORTAR = "es un fallo del cliente; reporta el problema"
-
-
-class ErrorLocal(Exception):
-    def __init__(self, codigo: str, mensaje: str):
-        super().__init__(f"{codigo}: {mensaje}")
-        self.codigo = codigo
-        self.mensaje = mensaje
 
 
 class _TomaPerdida(Exception):
