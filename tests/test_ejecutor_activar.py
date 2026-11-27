@@ -611,3 +611,14 @@ def test_excepcion_con_id_remoto_no_libera_el_trabajo(env, monkeypatch):
     assert guardado["id_remoto"] == "remoto-ya-creado"
     assert guardado["estado"] == "enviando"
     assert any(e["id_local"] == a["id_local"] for e in resumen.errores)
+
+
+def test_baja_con_proyecto_de_version_nueva_no_bloquea_el_trabajo(env):
+    p = env.ctx.proyectos.crear("P")
+    ruta = env.ctx.proyectos.dir_json / f"{p.id}.json"
+    datos = json.loads(ruta.read_text(encoding="utf-8")); datos["version"] = 2
+    ruta.write_text(json.dumps(datos), encoding="utf-8")
+    t = env.sembrar("enviado", proyecto="Otro")
+    env.get(json=vista_completada("analisis"))
+    activar(env.ctx)
+    assert env.leer(t)["estado"] == "en_biblioteca"

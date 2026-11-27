@@ -237,8 +237,8 @@ def _proyecto(ctx, args) -> int:
             partes.append(f"Videos agregados a «{p.nombre}»: {nuevos} de {len(ids)}.")
             return "\n".join(partes)
         if accion == "quitar":
-            ps.quitar_video(args.nombre, id_video)
-            return f"Video {id_video} quitado de «{args.nombre}»."
+            p = ps.quitar_video(args.nombre, id_video)
+            return f"Video {id_video} quitado de «{p.nombre}»."
         if accion == "editar":
             objetivo = SIN_CAMBIO if args.objetivo is None else args.objetivo
             p = ps.editar(args.nombre, args.nuevo_nombre, objetivo)
@@ -246,8 +246,8 @@ def _proyecto(ctx, args) -> int:
         if accion == "nota":
             p = ps.anotar(args.nombre, args.texto, "cli")
             return f"Nota agregada a «{p.nombre}»."
-        ps.borrar(args.nombre)
-        return f"Proyecto «{args.nombre}» borrado."
+        p = ps.borrar(args.nombre)
+        return f"Proyecto «{p.nombre}» borrado."
 
     salida, aviso = con_proyectos(ctx, correr)
     print(salida)

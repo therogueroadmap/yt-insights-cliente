@@ -4,7 +4,7 @@ import re
 import pytest
 
 from yti_cliente.errores import ErrorLocal
-from yti_cliente.proyectos import slug_proyecto
+from yti_cliente.proyectos import AVISO_VISTA, slug_proyecto
 
 
 def test_crear_escribe_json_v1(proyectos):
@@ -67,7 +67,7 @@ def test_agregar_idempotente_y_quitar(proyectos):
 
 def test_editar_renombra_cambia_y_borra_objetivo_y_vista_vieja(proyectos):
     p = proyectos.crear("Viejo", "obj")
-    vieja = proyectos.ruta_vista(p); vieja.parent.mkdir(parents=True); vieja.write_text("x", encoding="utf-8")
+    vieja = proyectos.ruta_vista(p); vieja.parent.mkdir(parents=True); vieja.write_text(AVISO_VISTA, encoding="utf-8")
     q = proyectos.editar("Viejo", nombre="Nuevo", objetivo="")
     assert (q.id, q.nombre, q.objetivo) == (p.id, "Nuevo", None)
     assert not vieja.exists()
@@ -92,7 +92,7 @@ def test_borrar_quita_json_y_vista_no_videos(proyectos):
     p = proyectos.crear("A")
     proyectos.agregar_video("A", "V1")
     carpeta = proyectos.biblioteca.raiz / "videos" / "V1-x"; carpeta.mkdir(parents=True)
-    vista = proyectos.ruta_vista(p); vista.parent.mkdir(parents=True); vista.write_text("v", encoding="utf-8")
+    vista = proyectos.ruta_vista(p); vista.parent.mkdir(parents=True); vista.write_text(AVISO_VISTA, encoding="utf-8")
     proyectos.borrar("A")
     assert not (proyectos.dir_json / f"{p.id}.json").exists() and not vista.exists() and carpeta.is_dir()
 
@@ -127,3 +127,27 @@ def test_proyecto_pedido_ilegible_da_ilegible_no_inexistente(proyectos):
     (proyectos.dir_json / "p-deadbeef.json").write_text("{", encoding="utf-8")
     with pytest.raises(ErrorLocal) as e: proyectos.resolver("p-deadbeef")
     assert e.value.codigo == "PROYECTO_ILEGIBLE"
+
+def test_borrar_no_toca_un_md_sin_marca(proyectos):
+    p = proyectos.crear("A")
+    vista = proyectos.ruta_vista(p); vista.parent.mkdir(parents=True)
+    vista.write_text("# notas a mano\n", encoding="utf-8")
+    proyectos.borrar("A")
+    assert vista.read_text(encoding="utf-8") == "# notas a mano\n"
+
+def test_borrar_y_quitar_devuelven_el_proyecto_resuelto(proyectos):
+    proyectos.crear("C")
+    proyectos.agregar_video("C", "V1")
+    assert proyectos.quitar_video("C++", "V1").nombre == "C"
+    assert proyectos.borrar("C++").nombre == "C"
+
+def test_json_con_videos_mal_formados_es_ilegible(proyectos):
+    p = proyectos.crear("A")
+    ruta = proyectos.dir_json / f"{p.id}.json"
+    for malo in ([{}], ["x"], [{"video_id": 3}]):
+        datos = json.loads(ruta.read_text(encoding="utf-8")); datos["videos"] = malo
+        ruta.write_text(json.dumps(datos), encoding="utf-8")
+        assert proyectos.ilegibles() == [ruta.name]
+    datos["videos"] = []; datos["notas"] = ["x"]
+    ruta.write_text(json.dumps(datos), encoding="utf-8")
+    assert proyectos.ilegibles() == [ruta.name]

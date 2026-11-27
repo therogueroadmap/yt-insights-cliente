@@ -273,6 +273,7 @@ def test_falta_clave_con_proyecto_no_deja_video_enlazado(tmp_path):
     with pytest.raises(ErrorLocal) as e:
         registrar(ctx, URL, proyecto="P")
     assert e.value.codigo == "FALTA_CLAVE" and ctx.proyectos.resolver("P").videos == []
+    assert (ctx.biblioteca.raiz / "proyectos" / "p.md").is_file()
 
 
 def test_registrar_migra_md_antiguo_antes_de_resolver(env):
@@ -286,6 +287,15 @@ def test_registrar_migra_md_antiguo_antes_de_resolver(env):
     assert not r.mensaje.endswith("creado.")
     assert [p.nombre for p in env.ctx.proyectos.listar()] == ["Viejo"]
     assert [v["video_id"] for v in env.ctx.proyectos.resolver("viejo").videos] == [VID]
+
+
+def test_registrar_sin_proyecto_regenera_vistas_tras_migrar(env):
+    vista = env.cfg.biblioteca / "proyectos"
+    vista.mkdir(parents=True)
+    (vista / "viejo.md").write_text("# Viejo\n\nnota a mano\n", encoding="utf-8")
+    registrar(env.ctx, URL)
+    assert [p.nombre for p in env.ctx.proyectos.listar()] == ["Viejo"]
+    assert "nota a mano" in (vista / "viejo.md").read_text(encoding="utf-8")
 
 
 # --- enviar ---

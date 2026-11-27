@@ -76,9 +76,27 @@ def _de_dict(ruta: Path, datos) -> Proyecto:
             or not isinstance(datos.get("creado"), str)
             or not isinstance(datos.get("actualizado"), str)):
         raise _Ilegible
+    if (not all(isinstance(v, dict) and isinstance(v.get("video_id"), str) for v in datos["videos"])
+            or not all(isinstance(n, dict) for n in datos["notas"])):
+        raise _Ilegible
     return Proyecto(id=datos["id"], nombre=datos["nombre"], objetivo=objetivo,
                     notas=datos["notas"], videos=datos["videos"],
                     creado=datos["creado"], actualizado=datos["actualizado"])
+
+
+def _borrar_vista_generada(ruta: Path) -> None:
+    """Borra una vista solo si es generada (lleva AVISO_VISTA); un `.md` ajeno no se toca."""
+    try:
+        texto = ruta.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return
+    except (OSError, UnicodeDecodeError):
+        log.warning("no se borra %s: no se pudo leer para comprobar que sea una vista generada", ruta)
+        return
+    if AVISO_VISTA not in texto:
+        log.warning("no se borra %s: no es una vista generada", ruta)
+        return
+    ruta.unlink(missing_ok=True)
 
 
 class Proyectos:
@@ -221,13 +239,14 @@ class Proyectos:
         self._guardar(p)
         return True
 
-    def quitar_video(self, ref: str, video_id: str) -> None:
+    def quitar_video(self, ref: str, video_id: str) -> Proyecto:
         p = self.resolver(ref)
         restantes = [v for v in p.videos if v["video_id"] != video_id]
         if len(restantes) == len(p.videos):
             raise ErrorLocal("VIDEO_NO_EN_PROYECTO", f"el video {video_id} no está en «{p.nombre}».")
         p.videos = restantes
         self._guardar(p)
+        return p
 
     def editar(self, ref: str, nombre: str | None = None, objetivo=SIN_CAMBIO) -> Proyecto:
         p = self.resolver(ref)
@@ -246,7 +265,7 @@ class Proyectos:
             return p
         self._guardar(p)
         if self.ruta_vista(p) != vista_vieja:
-            vista_vieja.unlink(missing_ok=True)
+            _borrar_vista_generada(vista_vieja)
         return p
 
     def anotar(self, ref: str, texto: str, origen: str) -> Proyecto:
@@ -262,7 +281,8 @@ class Proyectos:
         self._guardar(p)
         return p
 
-    def borrar(self, ref: str) -> None:
+    def borrar(self, ref: str) -> Proyecto:
         p = self.resolver(ref)
         self._ruta(p.id).unlink(missing_ok=True)
-        self.ruta_vista(p).unlink(missing_ok=True)
+        _borrar_vista_generada(self.ruta_vista(p))
+        return p

@@ -136,3 +136,10 @@ def test_fallo_en_la_limpieza_no_enmascara_el_error_original(proyectos, monkeypa
     assert "bloqueado" in caplog.text
     monkeypatch.undo()
     assert (proyectos.dir_vistas / "arquitectura.md").is_file()
+
+def test_enlace_con_corchetes_en_el_titulo_se_importa_como_video(proyectos):
+    _carpeta(proyectos, "dQw4w9WgXcQ-song")
+    _viejo(proyectos, "mix", "# Mix\n- [Song [Official Video]](../videos/dQw4w9WgXcQ-song/)\n")
+    assert migrar_antiguos(proyectos) == []
+    p = proyectos.resolver("Mix")
+    assert [v["video_id"] for v in p.videos] == ["dQw4w9WgXcQ"] and p.notas == []

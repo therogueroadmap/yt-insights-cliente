@@ -14,7 +14,7 @@ from yti_cliente.proyectos import AVISO_VISTA, Proyectos, slug_proyecto
 
 log = logging.getLogger(__name__)
 
-_RE_ENLACE_VIDEO = re.compile(r"\s*(?:[-*+]\s+)?\[[^\]]*\]\(\.\./videos/([^)/]+)/?\)\s*")
+_RE_ENLACE_VIDEO = re.compile(r"\s*(?:[-*+]\s+)?\[(?:[^\[\]]|\[[^\[\]]*\])*\]\(\.\./videos/([^)/]+)/?\)\s*")
 _RE_ID_VIDEO = re.compile(r"[A-Za-z0-9_-]{11}")
 _MAX_REINTENTOS_NOMBRE = 1000
 
@@ -133,13 +133,19 @@ def _migrar_uno(proyectos: Proyectos, ruta: Path, texto: str) -> None:
 
 def migrar_antiguos(proyectos: Proyectos) -> list[str]:
     """Convierte los `.md` antiguos de `proyectos/` en proyectos JSON. Devuelve los avisos."""
+    return migrar_antiguos_contando(proyectos)[0]
+
+
+def migrar_antiguos_contando(proyectos: Proyectos) -> tuple[list[str], int]:
+    """Como `migrar_antiguos`, y además devuelve cuántos archivos se migraron."""
     if not proyectos.dir_vistas.is_dir():
-        return []
+        return [], 0
     try:
         existentes = {slug_proyecto(p.nombre) for p in proyectos.listar()}
     except ErrorLocal as e:
-        return [f"no se migraron los proyectos antiguos: {e.mensaje}"]
+        return [f"no se migraron los proyectos antiguos: {e.mensaje}"], 0
     avisos: list[str] = []
+    migrados = 0
     for ruta in sorted(proyectos.dir_vistas.glob("*.md")):
         if ruta.stem in existentes:
             continue
@@ -152,9 +158,10 @@ def migrar_antiguos(proyectos: Proyectos) -> list[str]:
             continue
         try:
             _migrar_uno(proyectos, ruta, texto)
+            migrados += 1
         except ErrorLocal as e:
             avisos.append(f"{ruta.name}: no se migró ({e.mensaje})")
         except OSError as e:
             avisos.append(f"{ruta.name}: no se migró ({e})")
             log.warning("migración de %s falló: %s", ruta.name, e)
-    return avisos
+    return avisos, migrados

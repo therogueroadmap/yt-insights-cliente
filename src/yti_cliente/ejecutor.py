@@ -29,7 +29,7 @@ from yti_cliente.config import Config, ErrorConfig, validar_clave_proveedor, val
 from yti_cliente.errores import ErrorLocal
 from yti_cliente.limites import MAX_OBJETIVO
 from yti_cliente.proyectos import Proyectos, es_id_proyecto
-from yti_cliente.proyectos_migracion import migrar_antiguos
+from yti_cliente.proyectos_migracion import migrar_antiguos_contando
 from yti_cliente.proyectos_vista import regenerar_vistas
 from yti_cliente.render_md import analisis_a_markdown, marca_tiempo
 from yti_cliente.testigo import ResultadoTestigo, SinConexion
@@ -175,11 +175,15 @@ _AVISO_VISTAS = "No se pudieron regenerar las vistas de proyectos; se corregirá
 
 def preparar_proyectos(ctx: Contexto) -> Proyectos:
     """Migra los `.md` antiguos y devuelve `ctx.proyectos`. El candado lo sostiene quien llama."""
+    migrados = 0
     try:
-        for aviso in migrar_antiguos(ctx.proyectos):
+        avisos, migrados = migrar_antiguos_contando(ctx.proyectos)
+        for aviso in avisos:
             log.warning("migración de proyectos: %s", aviso)
     except OSError as e:
         log.warning("no se pudieron migrar los proyectos antiguos: %s", e)
+    if migrados:
+        actualizar_vistas(ctx)
     return ctx.proyectos
 
 
@@ -187,8 +191,8 @@ def actualizar_vistas(ctx: Contexto) -> str | None:
     """Regenera las vistas; ante un fallo de disco registra y devuelve un aviso."""
     try:
         regenerar_vistas(ctx.proyectos)
-    except OSError as e:
-        log.warning("no se pudieron regenerar las vistas de proyectos: %s", e)
+    except Exception as e:  # noqa: BLE001 - la vista nunca tumba la operación
+        log.warning("no se pudieron regenerar las vistas de proyectos: %s", getattr(e, "mensaje", e))
         return _AVISO_VISTAS
     return None
 
@@ -232,8 +236,10 @@ def registrar(
         proyectos = preparar_proyectos(ctx)
         proy = None
         sufijo = ""
+        creado_proy = False
         if proyecto:
             proy, creado = proyectos.resolver_o_crear(proyecto)
+            creado_proy = creado
             if creado:
                 sufijo = f" Proyecto «{proy.nombre}» creado."
             if objetivo is None and modo == "analisis":
@@ -276,6 +282,8 @@ def registrar(
                     estimacion(activo.get("duracion_s")),
                 )
 
+        if creado_proy:
+            actualizar_vistas(ctx)
         _verificar_claves(ctx.cfg, modo, canal)
         if proy is not None:
             proyectos.agregar_video(proy.id, video_id)
@@ -591,8 +599,9 @@ def _enlazar_en_baja(ctx: Contexto, ref: str, video_id: str) -> None:
         else:
             p, _ = proyectos.resolver_o_crear(ref)
             proyectos.agregar_video(p.id, video_id)
-    except ErrorLocal as e:
-        log.warning("la baja no pudo enlazar el video %s al proyecto %s: %s", video_id, ref, e.mensaje)
+    except Exception as e:  # noqa: BLE001 - enlazar nunca impide dejar el trabajo en la biblioteca
+        log.warning("la baja no pudo enlazar el video %s al proyecto %s: %s",
+                    video_id, ref, getattr(e, "mensaje", e))
 
 
 def bajar_resultado(ctx: Contexto, trabajo: dict, vista: dict) -> dict:
