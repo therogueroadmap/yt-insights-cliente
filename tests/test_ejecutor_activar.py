@@ -381,12 +381,55 @@ def test_baja_idempotente(env):
     assert indice2.count(f"[{VID}]") == 1
 
 
-def test_baja_con_proyecto(env):
+def test_baja_con_proyecto_por_id_no_toca_pertenencia(env):
+    p = env.ctx.proyectos.crear("Mi proyecto")
+    env.sembrar("enviado", proyecto=p.id)
+    env.get(json=vista_completada("analisis"))
+    activar(env.ctx)
+    assert env.ctx.proyectos.resolver(p.id).videos == []
+    assert (env.raiz / "proyectos" / "mi-proyecto.md").is_file()
+
+
+def test_baja_respeta_un_quitar_hecho_en_cola(env):
+    p = env.ctx.proyectos.crear("P")
+    env.ctx.proyectos.agregar_video("P", VID)
+    env.ctx.proyectos.quitar_video("P", VID)
+    env.sembrar("enviado", proyecto=p.id)
+    env.get(json=vista_completada("analisis"))
+    activar(env.ctx)
+    assert env.ctx.proyectos.resolver("P").videos == []
+
+
+def test_baja_con_nombre_legado_resuelve_o_crea_y_enlaza(env):
     env.sembrar("enviado", proyecto="Mi proyecto")
     env.get(json=vista_completada("analisis"))
     activar(env.ctx)
+    p = env.ctx.proyectos.resolver("Mi proyecto")
+    assert [v["video_id"] for v in p.videos] == [VID]
     texto = (env.raiz / "proyectos" / "mi-proyecto.md").read_text(encoding="utf-8")
     assert f"../videos/{VID}-como-migrar/" in texto
+
+
+def test_baja_con_proyecto_borrado_no_lo_recrea(env, caplog):
+    p = env.ctx.proyectos.crear("P")
+    env.ctx.proyectos.borrar("P")
+    t = env.sembrar("enviado", proyecto=p.id)
+    env.get(json=vista_completada("analisis"))
+    activar(env.ctx)
+    assert env.ctx.proyectos.listar() == [] and env.leer(t)["estado"] == "en_biblioteca"
+    assert "P" in caplog.text or p.id in caplog.text
+
+
+def test_fallo_al_regenerar_vistas_no_pierde_la_operacion(env, monkeypatch):
+    from yti_cliente import ejecutor
+
+    def falla(_proyectos):
+        raise OSError("disco lleno")
+
+    monkeypatch.setattr(ejecutor, "regenerar_vistas", falla)
+    proyecto, aviso = ejecutor.con_proyectos(env.ctx, lambda p: p.crear("Z"))
+    assert env.ctx.proyectos.resolver("Z").id == proyecto.id
+    assert "se corregirán" in aviso
 
 
 def test_completado_sin_transcripcion(env):

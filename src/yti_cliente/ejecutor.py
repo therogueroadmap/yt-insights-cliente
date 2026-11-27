@@ -5,7 +5,7 @@ import time as _time
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypeVar
 
 import httpx
 import platformdirs
@@ -28,6 +28,9 @@ from yti_cliente.cola import Cola, ahora_utc, desde_iso, iso
 from yti_cliente.config import Config, ErrorConfig, validar_clave_proveedor, validar_idioma
 from yti_cliente.errores import ErrorLocal
 from yti_cliente.limites import MAX_OBJETIVO
+from yti_cliente.proyectos import Proyectos, es_id_proyecto
+from yti_cliente.proyectos_migracion import migrar_antiguos
+from yti_cliente.proyectos_vista import regenerar_vistas
 from yti_cliente.render_md import analisis_a_markdown, marca_tiempo
 from yti_cliente.testigo import ResultadoTestigo, SinConexion
 from yti_cliente.youtube import UrlNoAdmitida, extraer_video_id
@@ -54,6 +57,7 @@ class Contexto:
     obtener_testigo: Callable[[str], ResultadoTestigo]
     transport: httpx.BaseTransport | None
     ruta_cache_version: Path
+    proyectos: Proyectos
 
     def api(self) -> ClienteApi:
         if _falta(self.cfg.clave_yti):
@@ -80,15 +84,18 @@ def crear_contexto(
     transport: httpx.BaseTransport | None = None,
 ) -> Contexto:
     reloj = reloj or ahora_utc
+    cola = Cola(cfg.biblioteca, reloj=reloj)
+    biblioteca = Biblioteca(cfg.biblioteca)
     return Contexto(
         cfg=cfg,
-        cola=Cola(cfg.biblioteca, reloj=reloj),
-        biblioteca=Biblioteca(cfg.biblioteca),
+        cola=cola,
+        biblioteca=biblioteca,
         reloj=reloj,
         obtener_testigo=obtener_testigo or _testigo.obtener_testigo,
         transport=transport,
         ruta_cache_version=platformdirs.user_state_path("yt-insights-cliente", appauthor=False)
         / "version.json",
+        proyectos=Proyectos(biblioteca, cola),
     )
 
 
@@ -161,6 +168,38 @@ def _aviso_duplicado(texto: str, url: str) -> str:
     return f"{texto}. Para enviarlo igualmente: yti encolar {url} --forzar"
 
 
+T = TypeVar("T")
+
+_AVISO_VISTAS = "No se pudieron regenerar las vistas de proyectos; se corregirán en la próxima operación."
+
+
+def preparar_proyectos(ctx: Contexto) -> Proyectos:
+    """Migra los `.md` antiguos y devuelve `ctx.proyectos`. El candado lo sostiene quien llama."""
+    try:
+        for aviso in migrar_antiguos(ctx.proyectos):
+            log.warning("migración de proyectos: %s", aviso)
+    except OSError as e:
+        log.warning("no se pudieron migrar los proyectos antiguos: %s", e)
+    return ctx.proyectos
+
+
+def actualizar_vistas(ctx: Contexto) -> str | None:
+    """Regenera las vistas; ante un fallo de disco registra y devuelve un aviso."""
+    try:
+        regenerar_vistas(ctx.proyectos)
+    except OSError as e:
+        log.warning("no se pudieron regenerar las vistas de proyectos: %s", e)
+        return _AVISO_VISTAS
+    return None
+
+
+def con_proyectos(ctx: Contexto, accion: Callable[[Proyectos], T]) -> tuple[T, str | None]:
+    """Ejecuta `accion` con el candado, tras migrar, y regenera las vistas al final."""
+    with ctx.cola.candado():
+        resultado = accion(preparar_proyectos(ctx))
+        return resultado, actualizar_vistas(ctx)
+
+
 def registrar(
     ctx: Contexto,
     url: str,
@@ -188,9 +227,23 @@ def registrar(
         except ErrorConfig as err:
             raise ErrorLocal("IDIOMA_INVALIDO", str(err)) from None
     modo = "transcripcion" if solo_transcripcion else "analisis"
-    normalizado = normalizar_objetivo(objetivo)
 
     with ctx.cola.candado():
+        proyectos = preparar_proyectos(ctx)
+        proy = None
+        sufijo = ""
+        if proyecto:
+            proy, creado = proyectos.resolver_o_crear(proyecto)
+            if creado:
+                sufijo = f" Proyecto «{proy.nombre}» creado."
+            if objetivo is None and modo == "analisis":
+                objetivo = proy.objetivo
+        if objetivo is not None and len(objetivo) > MAX_OBJETIVO:
+            raise ErrorLocal(
+                "OBJETIVO_LARGO", f"El objetivo supera los {MAX_OBJETIVO} caracteres."
+            )
+        normalizado = normalizar_objetivo(objetivo)
+
         if not forzar:
             existente = (
                 ctx.biblioteca.tiene_transcripcion(video_id)
@@ -198,28 +251,34 @@ def registrar(
                 else ctx.biblioteca.buscar_analisis(video_id, objetivo)
             )
             if existente is not None:
-                if proyecto:
-                    ctx.biblioteca.agregar_a_proyecto(proyecto, video_id)
+                if proy is not None:
+                    proyectos.agregar_video(proy.id, video_id)
+                    actualizar_vistas(ctx)
                 return ResultadoEncolar(
                     True,
-                    _aviso_duplicado(f"Ya está en la biblioteca: {existente}", url),
+                    _aviso_duplicado(f"Ya está en la biblioteca: {existente}", url) + sufijo,
                     None,
                     estimacion(None),
                 )
             activo = ctx.cola.buscar_activo(video_id, normalizado, modo)
             if activo is not None:
-                if proyecto and not activo.get("proyecto"):
-                    ctx.cola.actualizar_si(
-                        activo["id_local"], {"proyecto": activo.get("proyecto")}, {"proyecto": proyecto}
-                    )
+                if proy is not None:
+                    proyectos.agregar_video(proy.id, video_id)
+                    if not activo.get("proyecto"):
+                        ctx.cola.actualizar_si(
+                            activo["id_local"], {"proyecto": activo.get("proyecto")}, {"proyecto": proy.id}
+                        )
+                    actualizar_vistas(ctx)
                 return ResultadoEncolar(
                     True,
-                    _aviso_duplicado(f"Ya está en la cola con el id {activo['id_local']}", url),
+                    _aviso_duplicado(f"Ya está en la cola con el id {activo['id_local']}", url) + sufijo,
                     activo,
                     estimacion(activo.get("duracion_s")),
                 )
 
         _verificar_claves(ctx.cfg, modo, canal)
+        if proy is not None:
+            proyectos.agregar_video(proy.id, video_id)
         trabajo = ctx.cola.crear(
             {
                 "url": url,
@@ -228,12 +287,14 @@ def registrar(
                 "objetivo": objetivo,
                 "idioma": idioma or ctx.cfg.idioma,
                 "objetivo_normalizado": normalizado,
-                "proyecto": proyecto,
+                "proyecto": proy.id if proy is not None else None,
                 "testigo_estado": "desactivado" if sin_testigo else "pendiente",
             }
         )
+        if proy is not None:
+            actualizar_vistas(ctx)
         return ResultadoEncolar(
-            False, f"Trabajo {trabajo['id_local']} registrado.", trabajo, estimacion(None)
+            False, f"Trabajo {trabajo['id_local']} registrado." + sufijo, trabajo, estimacion(None)
         )
 
 
@@ -521,6 +582,19 @@ def _error_remoto(ctx: Contexto, trabajo: dict, error: dict) -> None:
     _poner_error(ctx, trabajo, codigo, mensaje)
 
 
+def _enlazar_en_baja(ctx: Contexto, ref: str, video_id: str) -> None:
+    """Un id no toca la pertenencia (ya la enlazó `registrar`); un nombre legado se resuelve o crea."""
+    try:
+        proyectos = preparar_proyectos(ctx)
+        if es_id_proyecto(ref):
+            proyectos.resolver(ref)
+        else:
+            p, _ = proyectos.resolver_o_crear(ref)
+            proyectos.agregar_video(p.id, video_id)
+    except ErrorLocal as e:
+        log.warning("la baja no pudo enlazar el video %s al proyecto %s: %s", video_id, ref, e.mensaje)
+
+
 def bajar_resultado(ctx: Contexto, trabajo: dict, vista: dict) -> dict:
     """Escribe el resultado en la biblioteca y deja el trabajo `en_biblioteca` (idempotente)."""
     id_local = trabajo["id_local"]
@@ -588,8 +662,9 @@ def bajar_resultado(ctx: Contexto, trabajo: dict, vista: dict) -> dict:
                 ),
             )
         if trabajo.get("proyecto"):
-            bib.agregar_a_proyecto(trabajo["proyecto"], video_id)
+            _enlazar_en_baja(ctx, trabajo["proyecto"], video_id)
         bib.regenerar_indice()
+        actualizar_vistas(ctx)
         ctx.cola.borrar_testigo(id_local)
         cambios = {"estado": "en_biblioteca", "estado_remoto": "completado", "uso": uso, "error": None}
         if aviso:

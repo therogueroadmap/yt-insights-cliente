@@ -216,17 +216,76 @@ def test_duplicado_con_proyecto_en_biblioteca(env):
     env.ctx.biblioteca.escribir_transcripcion(VID, "T", _front_t(), "texto")
     env.ctx.biblioteca.escribir_analisis(VID, "T", None, _front_a(None), "cuerpo")
     r = registrar(env.ctx, URL, proyecto="x")
-    assert r.duplicado is True
-    texto = (env.cfg.biblioteca / "proyectos" / "x.md").read_text(encoding="utf-8")
-    assert "../videos/" in texto
+    assert r.duplicado is True and r.mensaje.endswith("Proyecto «x» creado.")
+    assert [v["video_id"] for v in env.ctx.proyectos.resolver("x").videos] == [VID]
+    assert "../videos/" in (env.cfg.biblioteca / "proyectos" / "x.md").read_text(encoding="utf-8")
 
 
 def test_duplicado_con_proyecto_en_cola(env):
     primero = registrar(env.ctx, URL)
-    assert primero.trabajo["proyecto"] is None
     r = registrar(env.ctx, URL, proyecto="x")
-    assert r.duplicado is True
-    assert env.ctx.cola.leer(primero.trabajo["id_local"])["proyecto"] == "x"
+    p = env.ctx.proyectos.resolver("x")
+    assert r.duplicado is True and env.ctx.cola.leer(primero.trabajo["id_local"])["proyecto"] == p.id
+    assert [v["video_id"] for v in p.videos] == [VID]
+
+
+def test_duplicado_en_cola_con_otro_proyecto_enlaza_al_segundo(env):
+    registrar(env.ctx, URL, proyecto="A")
+    registrar(env.ctx, URL, proyecto="B")
+    assert [v["video_id"] for v in env.ctx.proyectos.resolver("B").videos] == [VID]
+    assert env.ctx.cola.listar()[0]["proyecto"] == env.ctx.proyectos.resolver("A").id
+
+
+def test_trabajo_nuevo_guarda_id_y_enlaza(env):
+    r = registrar(env.ctx, URL, proyecto="Mi proyecto")
+    p = env.ctx.proyectos.resolver("Mi proyecto")
+    assert r.trabajo["proyecto"] == p.id and [v["video_id"] for v in p.videos] == [VID]
+
+
+def test_objetivo_por_defecto_del_proyecto(env):
+    env.ctx.proyectos.crear("P", "Comparar enfoques")
+    r = registrar(env.ctx, URL, proyecto="P")
+    assert (r.trabajo["objetivo"], r.trabajo["objetivo_normalizado"]) == ("Comparar enfoques", "comparar enfoques")
+
+
+def test_objetivo_explicito_gana_y_solo_transcripcion_no_aplica(env):
+    env.ctx.proyectos.crear("P", "Comparar enfoques")
+    assert registrar(env.ctx, URL, proyecto="P", objetivo="Otro").trabajo["objetivo"] == "Otro"
+    assert registrar(env.ctx, URL, proyecto="P", solo_transcripcion=True, forzar=True).trabajo["objetivo"] is None
+
+
+def test_objetivo_del_proyecto_cuenta_para_duplicado_en_biblioteca(env):
+    env.ctx.proyectos.crear("P", "Comparar enfoques")
+    env.ctx.biblioteca.escribir_transcripcion(VID, "T", _front_t(), "texto")
+    env.ctx.biblioteca.escribir_analisis(VID, "T", "Comparar enfoques", _front_a("Comparar enfoques"), "cuerpo")
+    r = registrar(env.ctx, URL, proyecto="P")
+    assert r.duplicado is True and env.ctx.cola.listar() == []
+
+
+def test_proyecto_con_forma_de_id_inexistente_falla_sin_crear(env):
+    with pytest.raises(ErrorLocal) as e:
+        registrar(env.ctx, URL, proyecto="p-00000000")
+    assert e.value.codigo == "PROYECTO_NO_EXISTE" and env.ctx.cola.listar() == []
+
+
+def test_falta_clave_con_proyecto_no_deja_video_enlazado(tmp_path):
+    ctx = crear_contexto(_cfg(tmp_path, clave_anthropic=None), reloj=lambda: AHORA, obtener_testigo=TestigoFalso())
+    with pytest.raises(ErrorLocal) as e:
+        registrar(ctx, URL, proyecto="P")
+    assert e.value.codigo == "FALTA_CLAVE" and ctx.proyectos.resolver("P").videos == []
+
+
+def test_registrar_migra_md_antiguo_antes_de_resolver(env):
+    d = env.cfg.biblioteca / "videos" / f"{VID}-algo"
+    d.mkdir(parents=True)
+    (d / "transcripcion.md").write_text(f"---\nvideo_id: {VID}\n---\n\ntexto\n", encoding="utf-8")
+    vista = env.cfg.biblioteca / "proyectos"
+    vista.mkdir(parents=True)
+    (vista / "viejo.md").write_text(f"# Viejo\n\n- [Algo](../videos/{VID}-algo/)\n", encoding="utf-8")
+    r = registrar(env.ctx, URL, proyecto="viejo")
+    assert not r.mensaje.endswith("creado.")
+    assert [p.nombre for p in env.ctx.proyectos.listar()] == ["Viejo"]
+    assert [v["video_id"] for v in env.ctx.proyectos.resolver("viejo").videos] == [VID]
 
 
 # --- enviar ---
