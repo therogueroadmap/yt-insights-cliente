@@ -15,6 +15,9 @@ def test_crear_escribe_json_v1(proyectos):
     assert datos["objetivo"] == "Comparar enfoques" and datos["notas"] == [] and datos["videos"] == []
     assert datos["creado"] == datos["actualizado"] == "2026-11-26T15:00:00Z"
 
+def test_dir_importados_bajo_dir_json(proyectos):
+    assert proyectos.dir_importados == proyectos.dir_json / "importados"
+
 def test_resolver_por_nombre_y_por_id(proyectos):
     p = proyectos.crear("Agentes de IA")
     assert proyectos.resolver("agentes  de ia").id == p.id      # compara por slug

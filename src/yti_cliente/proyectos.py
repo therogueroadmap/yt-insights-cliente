@@ -96,7 +96,7 @@ class Proyectos:
 
     @property
     def dir_importados(self) -> Path:
-        return self.biblioteca.raiz / ".yti" / "proyectos-importados"
+        return self.dir_json / "importados"
 
     def ruta_vista(self, p: Proyecto) -> Path:
         return self.dir_vistas / f"{slug_proyecto(p.nombre)}.md"
